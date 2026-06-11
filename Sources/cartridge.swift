@@ -280,6 +280,26 @@ final class Host {
 
 let host = Host()
 
+// Two-thread console: the OS may block the MAIN thread in modal loops
+// (macOS menu tracking, Windows window drags), so the GAME thread owns the
+// simulation and rendering and never stops. SDL threads/mutexes keep this
+// portable everywhere.
+nonisolated(unsafe) var evtMutex: OpaquePointer? = nil
+nonisolated(unsafe) var runFlag = SDL_AtomicInt(value: 1)
+
+func pushEvent(_ e: (Int32, Int32, Int32, Int32, Int32)) {
+    SDL_LockMutex(evtMutex)
+    host.events.append(e)
+    SDL_UnlockMutex(evtMutex)
+}
+
+func popEvent() -> (Int32, Int32, Int32, Int32, Int32)? {
+    SDL_LockMutex(evtMutex)
+    let e = host.events.isEmpty ? nil : host.events.removeFirst()
+    SDL_UnlockMutex(evtMutex)
+    return e
+}
+
 // MARK: - wasmtime trampoline: env pointer carries the function index
 
 let fnNames = [
@@ -364,16 +384,15 @@ let trampoline: wasmtime_func_callback_t = { env, _, args, nargs, results, nresu
                          host.mat.apply(x + w, y + h), host.mat.apply(x, y + h)],
                         closed: true, thickness: fval(args, 4), rgba: uval(args, 5))
     case 13: // evt_poll
-        if host.events.isEmpty {
-            ret = 0
-        } else {
-            let e = host.events.removeFirst()
+        if let e = popEvent() {
             host.writeI32(ival(args, 0), e.0)
             host.writeI32(ival(args, 1), e.1)
             host.writeI32(ival(args, 2), e.2)
             host.writeI32(ival(args, 3), e.3)
             host.writeI32(ival(args, 4), e.4)
             ret = 1
+        } else {
+            ret = 0
         }
     case 14: ret = host.loadSound(host.str(ival(args, 0), ival(args, 1)))
     case 15:
@@ -558,19 +577,83 @@ enum Main {
         call("boot")
         print("WasmCart: \(bound) env fns live, \(stubbed) auto-stubbed")
 
-        var running = true
-        var elapsedMs: Float = 0
-        var frames = 0
-        var last = SDL_GetTicksNS()
-        var sentStart = false
-        var sentThrust = false
-        var fullscreen = false
+        evtMutex = SDL_CreateMutex()
 
-        while running {
+        // everything the game thread needs, hoisted
+        struct GameCtx {
+            var context: OpaquePointer?
+            var memExt: wasmtime_extern_t
+            var frameFn: wasmtime_extern_t
+            var renderer: OpaquePointer?
+            var selftest: Float
+        }
+        var frameExt = export("frame")
+        let ctxBox = UnsafeMutablePointer<GameCtx>.allocate(capacity: 1)
+        ctxBox.initialize(to: GameCtx(context: context, memExt: memExt,
+                                      frameFn: frameExt, renderer: renderer,
+                                      selftest: selftest))
+
+        let gameThread = SDL_CreateThreadRuntime({ raw in
+            let ctx = raw!.assumingMemoryBound(to: GameCtx.self)
+            var last = SDL_GetTicksNS()
+            var elapsedMs: Float = 0
+            var frames = 0
+            var sentStart = false
+            var sentThrust = false
+            while SDL_GetAtomicInt(&runFlag) == 1 {
+                let now = SDL_GetTicksNS()
+                var dt = Float(now - last) / 1_000_000
+                last = now
+                if dt > 50 { dt = 50 }
+
+                // memory can grow mid-play; re-derive the base every frame
+                host.memoryBase = wasmtime_memory_data(ctx.pointee.context, &ctx.pointee.memExt.of.memory)
+                var arg = wasmtime_val_t()
+                arg.kind = UInt8(WASMTIME_F64)
+                arg.of.f64 = Double(dt)
+                var trap: OpaquePointer? = nil
+                _ = wasmtime_func_call(ctx.pointee.context, &ctx.pointee.frameFn.of.func, &arg, 1, nil, 0, &trap)
+                if trap != nil { SDL_SetAtomicInt(&runFlag, 0) }
+                host.reapVoices()
+                _ = SDL_RenderPresent(ctx.pointee.renderer)
+
+                frames += 1
+                elapsedMs += dt
+                let st = ctx.pointee.selftest
+                if st > 0 {
+                    if elapsedMs >= 1000, !sentStart {
+                        sentStart = true
+                        pushEvent((5, 57, 0, 0, 0))
+                        pushEvent((6, 57, 0, 0, 0))
+                    }
+                    if elapsedMs >= 2000, !sentThrust {
+                        sentThrust = true
+                        pushEvent((5, 73, 0, 0, 0))
+                    }
+                    if elapsedMs >= st * 1000 {
+                        if let surf = SDL_RenderReadPixels(ctx.pointee.renderer, nil) {
+                            _ = "native-selftest.bmp".withCString { SDL_SaveBMP(surf, $0) }
+                            SDL_DestroySurface(surf)
+                        }
+                        print("selftest: \(frames) frames, \(host.drawCalls) draw calls -> native-selftest.bmp")
+                        SDL_SetAtomicInt(&runFlag, 0)
+                    }
+                }
+
+                let used = SDL_GetTicksNS() - now
+                if used < 16_666_666 { SDL_DelayNS(16_666_666 - used) }
+            }
+            return 0
+        }, "game", UnsafeMutableRawPointer(ctxBox), nil, nil)
+
+        // main thread: nothing but the OS event pump. Menus and drags can
+        // block here all they like; the game thread never notices.
+        var fullscreen = false
+        while SDL_GetAtomicInt(&runFlag) == 1 {
             var e = SDL_Event()
-            while SDL_PollEvent(&e) {
+            while SDL_WaitEventTimeout(&e, 100) {
                 if e.type == SDL_EVENT_QUIT.rawValue {
-                    running = false
+                    SDL_SetAtomicInt(&runFlag, 0)
                 } else if e.type == SDL_EVENT_KEY_DOWN.rawValue, e.key.scancode == SDL_SCANCODE_F, !e.key.`repeat` {
                     fullscreen = !fullscreen
                     _ = SDL_SetWindowFullscreen(window, fullscreen)
@@ -579,54 +662,23 @@ enum Main {
                     if sf >= 0, !e.key.`repeat` {
                         let t: Int32 = e.type == SDL_EVENT_KEY_DOWN.rawValue ? 5 : 6
                         let shift: Int32 = (UInt32(e.key.mod) & SDL_KMOD_SHIFT) != 0 ? 1 : 0
-                        host.events.append((t, sf, shift, 0, 0))
+                        pushEvent((t, sf, shift, 0, 0))
                     }
                 } else if e.type == SDL_EVENT_MOUSE_BUTTON_DOWN.rawValue || e.type == SDL_EVENT_MOUSE_BUTTON_UP.rawValue {
                     let t: Int32 = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN.rawValue ? 9 : 10
                     let (lx, ly) = toLogical(window, e.button.x, e.button.y)
-                    host.events.append((t, 0, lx, ly, 0))
+                    pushEvent((t, 0, lx, ly, 0))
                 } else if e.type == SDL_EVENT_MOUSE_MOTION.rawValue {
                     let (lx, ly) = toLogical(window, e.motion.x, e.motion.y)
-                    host.events.append((11, lx, ly, 0, 0))
+                    pushEvent((11, lx, ly, 0, 0))
                 }
+                if SDL_GetAtomicInt(&runFlag) == 0 { break }
             }
-
-            let now = SDL_GetTicksNS()
-            var dt = Float(now - last) / 1_000_000
-            last = now
-            if dt > 50 { dt = 50 }
-
-            // memory can grow mid-play; re-derive the base every frame
-            host.memoryBase = wasmtime_memory_data(context, &memExt.of.memory)
-            call("frame", Double(dt))
-            host.reapVoices()
-            _ = SDL_RenderPresent(renderer)
-
-            frames += 1
-            elapsedMs += dt
-            if selftest > 0 {
-                if elapsedMs >= 1000, !sentStart {
-                    sentStart = true
-                    host.events.append((5, 57, 0, 0, 0))
-                    host.events.append((6, 57, 0, 0, 0))
-                }
-                if elapsedMs >= 2000, !sentThrust {
-                    sentThrust = true
-                    host.events.append((5, 73, 0, 0, 0))
-                }
-                if elapsedMs >= selftest * 1000 {
-                    if let surf = SDL_RenderReadPixels(renderer, nil) {
-                        _ = "native-selftest.bmp".withCString { SDL_SaveBMP(surf, $0) }
-                        SDL_DestroySurface(surf)
-                    }
-                    print("selftest: \(frames) frames, \(host.drawCalls) draw calls -> native-selftest.bmp")
-                    running = false
-                }
-            }
-
-            let used = SDL_GetTicksNS() - now
-            if used < 16_666_666 { SDL_DelayNS(16_666_666 - used) }
         }
+
+        var threadStatus: Int32 = 0
+        SDL_WaitThread(gameThread, &threadStatus)
+        ctxBox.deallocate()
 
         SDL_Quit()
     }

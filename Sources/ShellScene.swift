@@ -1,15 +1,24 @@
 // The console shell, built with SuperBox64Kit itself: a real SKScene with
 // vector lettering, exactly like the games it hosts (permutation 3).
+// Lists the carts folder (WASMCART_CARTS env, else carts/ beside the binary,
+// else carts/ under the working directory) as a pick-and-play menu.
 import SpriteKit
 import CSDL3
 
 final class ShellScene: SKScene {
     private let lines = SKNode()
     private var pulse: CGFloat = 0
+    private var carts: [String] = []
+    private var cartNames: [String] = []
+    private var selected = 0
+    private var rowRects: [CGRect] = []
+    private var dialogRect = CGRect.zero
+    private var rescanCountdown = 0
 
     override func didMove(to view: SKView) {
         backgroundColor = .black
         addChild(lines)
+        scanCarts()
         buildUI()
     }
 
@@ -21,29 +30,136 @@ final class ShellScene: SKScene {
         lines.addChild(node)
     }
 
+    private func cartsDirectory() -> String? {
+        if let env = ("WASMCART_CARTS".withCString { SDL_getenv($0) }) {
+            return String(cString: env)
+        }
+        var info = SDL_PathInfo()
+        if let base = SDL_GetBasePath() {
+            let p = String(cString: base) + "carts"
+            if p.withCString({ SDL_GetPathInfo($0, &info) }) { return p }
+        }
+        if let cwd = SDL_GetCurrentDirectory() {
+            var p = String(cString: cwd)
+            SDL_free(cwd)
+            if !p.hasSuffix("/") { p += "/" }
+            p += "carts"
+            if p.withCString({ SDL_GetPathInfo($0, &info) }) { return p }
+        }
+        return nil
+    }
+
+    private func scanCarts() {
+        carts = []
+        cartNames = []
+        guard let dir = cartsDirectory() else { return }
+        var count: Int32 = 0
+        guard let list = dir.withCString({ SDL_GlobDirectory($0, nil, 0, &count) }) else { return }
+        for i in 0..<Int(count) {
+            guard let entry = list[i] else { continue }
+            let name = String(cString: entry)
+            guard name.hasSuffix(".zip") || name.hasSuffix(".wasm") else { continue }
+            guard !name.hasPrefix(".") else { continue }
+            carts.append(dir + "/" + name)
+            cartNames.append(ShellFont.displayName(name))
+        }
+        SDL_free(UnsafeMutableRawPointer(list))
+        for i in 1..<max(1, carts.count) {
+            var j = i
+            while j > 0, cartNames[j - 1] > cartNames[j] {
+                cartNames.swapAt(j - 1, j)
+                carts.swapAt(j - 1, j)
+                j -= 1
+            }
+        }
+        if selected >= carts.count { selected = max(0, carts.count - 1) }
+    }
+
     private func buildUI() {
         lines.removeAllChildren()
-        vectorText("WASMCART", at: CGPoint(x: size.width / 2, y: size.height * 0.62), scale: 3.4, alpha: 0.85)
+        rowRects = []
+        vectorText("WASMCART", at: CGPoint(x: size.width / 2, y: size.height * 0.84), scale: 3.4, alpha: 0.85)
 
         // the slot
-        let slot = SKShapeNode(rect: CGRect(x: size.width / 2 - 240, y: size.height * 0.42, width: 480, height: 90))
+        let slotY = size.height * 0.68
+        let slot = SKShapeNode(rect: CGRect(x: size.width / 2 - 240, y: slotY, width: 480, height: 70))
         slot.strokeColor = SKColor(white: 1, alpha: 0.6)
         slot.lineWidth = 2
         slot.name = "slot"
         lines.addChild(slot)
-        let notch = SKShapeNode(rect: CGRect(x: size.width / 2 - 80, y: size.height * 0.42 + 34, width: 160, height: 22))
+        let notch = SKShapeNode(rect: CGRect(x: size.width / 2 - 80, y: slotY + 24, width: 160, height: 22))
         notch.fillColor = SKColor(white: 1, alpha: 0.25)
         notch.strokeColor = .clear
-        notch.name = "notch"
         lines.addChild(notch)
 
-        vectorText("INSERT CARTRIDGE", at: CGPoint(x: size.width / 2, y: size.height * 0.33), scale: 1.6, alpha: 0.75)
-        vectorText("CLICK OR DROP A WASM TO LOAD", at: CGPoint(x: size.width / 2, y: size.height * 0.26), scale: 1.0, alpha: 0.6)
-        vectorText("CTRL ESC EJECTS", at: CGPoint(x: size.width / 2, y: size.height * 0.21), scale: 1.0, alpha: 0.6)
+        let rowH = size.height * 0.045
+        var y = size.height * 0.58
+        if carts.isEmpty {
+            vectorText("NO CARTS FOUND", at: CGPoint(x: size.width / 2, y: y), scale: 1.2, alpha: 0.6)
+            y -= rowH
+        } else {
+            vectorText("CARTS", at: CGPoint(x: size.width / 2, y: y), scale: 1.2, alpha: 0.5)
+            y -= rowH
+            for (i, name) in cartNames.enumerated() {
+                let alpha: CGFloat = i == selected ? 1.0 : 0.55
+                vectorText(name, at: CGPoint(x: size.width / 2, y: y), scale: 1.2, alpha: alpha)
+                let rect = CGRect(x: size.width / 2 - 480, y: y - rowH / 2, width: 960, height: rowH)
+                rowRects.append(rect)
+                if i == selected {
+                    let box = SKShapeNode(rect: CGRect(x: size.width / 2 - 360, y: y - rowH / 2 + 4,
+                                                       width: 720, height: rowH - 8))
+                    box.strokeColor = SKColor(white: 1, alpha: 0.8)
+                    box.lineWidth = 1.5
+                    lines.addChild(box)
+                }
+                y -= rowH
+            }
+        }
+
+        y -= rowH * 0.4
+        vectorText("OPEN FILE", at: CGPoint(x: size.width / 2, y: y), scale: 1.0, alpha: 0.65)
+        dialogRect = CGRect(x: size.width / 2 - 240, y: y - rowH / 2, width: 480, height: rowH)
+
+        vectorText("ARROWS SELECT  ENTER LOADS  DROP A WASM ANYTIME", at: CGPoint(x: size.width / 2, y: size.height * 0.10), scale: 0.9, alpha: 0.5)
+        vectorText("CTRL ESC EJECTS", at: CGPoint(x: size.width / 2, y: size.height * 0.06), scale: 0.9, alpha: 0.5)
+    }
+
+    private func loadSelected() {
+        guard selected >= 0, selected < carts.count else { return }
+        insertCart(carts[selected])
+    }
+
+    override func keyDown(with event: NSEvent) {
+        switch Int(event.keyCode) {
+        case 126:
+            if !carts.isEmpty {
+                selected = (selected + carts.count - 1) % carts.count
+                buildUI()
+            }
+        case 125:
+            if !carts.isEmpty {
+                selected = (selected + 1) % carts.count
+                buildUI()
+            }
+        case 36, 49:
+            if carts.isEmpty {
+                SDL_SetAtomicInt(&wantDialog, 1)
+            } else {
+                loadSelected()
+            }
+        default:
+            break
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
-        print("DEBUG: shellscene click detected")
+        let p = event.location(in: self)
+        for (i, rect) in rowRects.enumerated() where rect.contains(p) {
+            selected = i
+            buildUI()
+            loadSelected()
+            return
+        }
         SDL_SetAtomicInt(&wantDialog, 1)
     }
 
@@ -53,11 +169,18 @@ final class ShellScene: SKScene {
         for child in lines.children where child.name == "slot" {
             (child as? SKShapeNode)?.strokeColor = SKColor(white: 1, alpha: glow)
         }
+        rescanCountdown -= 1
+        if rescanCountdown <= 0 {
+            rescanCountdown = 180
+            let before = carts
+            scanCarts()
+            if before != carts { buildUI() }
+        }
     }
 }
 
-// A tiny segment font for the shell (A-Z, 0-9, space). Each glyph is a set
-// of line segments in a 10x14 box.
+// A tiny segment font for the shell (A-Z, 0-9, space, dash, dot). Each glyph
+// is a set of line segments in a 10x14 box.
 enum ShellFont {
     static let strokes: [Character: [[CGFloat]]] = [
         "A": [[0,0,5,14],[5,14,10,0],[2,5,8,5]],
@@ -96,7 +219,29 @@ enum ShellFont {
         "7": [[0,14,10,14],[10,14,5,0]],
         "8": [[0,0,0,14],[0,14,10,14],[10,14,10,0],[10,0,0,0],[0,8,10,8]],
         "9": [[10,0,10,14],[10,14,0,14],[0,14,0,8],[0,8,10,8]],
+        "-": [[2,7,8,7]],
+        ".": [[4,0,6,0],[6,0,6,2],[6,2,4,2],[4,2,4,0]],
     ]
+
+    // Filename -> menu label: extension dropped, uppercased, characters the
+    // segment font lacks become spaces
+    static func displayName(_ file: String) -> String {
+        var bytes = Array(file.utf8)
+        if let dot = bytes.lastIndex(of: 46) { bytes.removeSubrange(dot...) }
+        var out = [UInt8]()
+        out.reserveCapacity(bytes.count + 1)
+        for b in bytes {
+            if b >= 97, b <= 122 {
+                out.append(b - 32)
+            } else if (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 45 || b == 46 || b == 32 {
+                out.append(b)
+            } else {
+                out.append(32)
+            }
+        }
+        out.append(0)
+        return out.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
+    }
 
     static func draw(_ text: String) -> SKNode {
         let node = SKNode()

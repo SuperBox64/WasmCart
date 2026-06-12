@@ -1,13 +1,13 @@
-// WASM-Cartridge: a native console for wasm-web-kit games. Loads ANY game
-// wasm built on SuperBox64 SpriteKit and plays it like a cartridge - the
-// env import surface is implemented on SDL3 and bound from the module's own
-// import table. Embedded Swift host (no stdlib, no Foundation), wasmtime C
-// API runtime. No browser, no webview, no JavaScript.
+// WasmCart: a native console for wasm game cartridges. Loads ANY game
+// wasm built on SuperBox64Kit and plays it like a cartridge. Embedded Swift
+// host (no stdlib, no Foundation), SDL3 + WAMR statically vendored from
+// source - no package managers, no dylibs, cross-platform by construction.
 //
-//   ./build.sh && ./wasm-cartridge game.wasm
-//   CARTRIDGE_SELFTEST=4 ./wasm-cartridge game.wasm
+//   ./WasmCart game.wasm
+//   CARTRIDGE_WASM=game.wasm ./WasmCart
+//   CARTRIDGE_SELFTEST=4 ./WasmCart game.wasm
 import CSDL3
-import CWasmtime
+import CWamr
 
 let LOGICAL_W: Float = 1920
 let LOGICAL_H: Float = 1080
@@ -43,7 +43,7 @@ final class Host {
     var stack: [Mat] = []
     var alpha: Float = 1
     var events: [(Int32, Int32, Int32, Int32, Int32)] = []
-    var memoryBase: UnsafeMutablePointer<UInt8>? = nil
+
     var soundSpecs: [SDL_AudioSpec] = [SDL_AudioSpec()]
     var soundBufs: [UnsafeMutablePointer<UInt8>?] = [nil]
     var soundLens: [UInt32] = [0]
@@ -60,24 +60,13 @@ final class Host {
     var storePath = ""
     var drawCalls = 0
 
-    func floats(_ ptr: Int32, _ n: Int) -> [Float] {
-        let p = UnsafeRawPointer(memoryBase! + Int(ptr))
-        var out = [Float]()
-        out.reserveCapacity(n)
-        for i in 0..<n { out.append(p.loadUnaligned(fromByteOffset: i * 4, as: Float.self)) }
-        return out
-    }
-
-    func str(_ ptr: Int32, _ len: Int32) -> String {
+    func cString(_ p: UnsafePointer<CChar>?, _ len: Int32) -> String {
+        guard let p else { return "" }
         var bytes = [UInt8]()
         bytes.reserveCapacity(Int(len) + 1)
-        for i in 0..<Int(len) { bytes.append(memoryBase![Int(ptr) + i]) }
+        for i in 0..<Int(len) { bytes.append(UInt8(bitPattern: p[i])) }
         bytes.append(0)
         return bytes.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
-    }
-
-    func writeI32(_ ptr: Int32, _ v: Int32) {
-        UnsafeMutableRawPointer(memoryBase! + Int(ptr)).storeBytes(of: v, toByteOffset: 0, as: Int32.self)
     }
 
     func fcolor(_ rgba: UInt32) -> SDL_FColor {
@@ -337,132 +326,166 @@ func popEvent() -> (Int32, Int32, Int32, Int32, Int32)? {
     return e
 }
 
-// MARK: - wasmtime trampoline: env pointer carries the function index
+// MARK: - WAMR natives: typed Swift functions, registered from natives.c.
+// Pointer parameters arrive ALREADY converted to native addresses by WAMR's
+// signature system - no manual wasm-memory arithmetic anywhere.
 
-let fnNames = [
-    "gfx_clear", "gfx_save", "gfx_restore", "gfx_translate", "gfx_rotate",
-    "gfx_scale", "gfx_set_alpha", "gfx_stroke_poly", "gfx_fill_poly",
-    "gfx_fill_circle", "gfx_stroke_circle", "gfx_fill_rect", "gfx_stroke_rect",
-    "evt_poll", "snd_by_name", "snd_play", "store_get", "store_set",
-    "snd_stop", "snd_set_volume", "snd_set_pan",
-]
+@_silgen_name("kit_register_natives")
+func kitRegisterNatives() -> Bool
 
-func fval(_ args: UnsafePointer<wasmtime_val_t>?, _ i: Int) -> Float {
-    let v = args![i]
-    if v.kind == UInt8(WASMTIME_F32) { return v.of.f32 }
-    if v.kind == UInt8(WASMTIME_F64) { return Float(v.of.f64) }
-    return Float(v.of.i32)
+@_cdecl("wamr_js_log")
+func wamr_js_log(_ e: OpaquePointer?, _ p: UnsafePointer<CChar>?, _ len: Int32) {
+    print(host.cString(p, len))
 }
 
-func ival(_ args: UnsafePointer<wasmtime_val_t>?, _ i: Int) -> Int32 {
-    let v = args![i]
-    if v.kind == UInt8(WASMTIME_I32) { return v.of.i32 }
-    if v.kind == UInt8(WASMTIME_F32) { return Int32(v.of.f32) }
-    return Int32(v.of.f64)
+@_cdecl("wamr_gfx_clear")
+func wamr_gfx_clear(_ e: OpaquePointer?, _ rgba: UInt32) {
+    var pw: Int32 = 0
+    var ph: Int32 = 0
+    _ = SDL_GetRenderOutputSize(host.renderer, &pw, &ph)
+    let sc = min(Float(pw) / LOGICAL_W, Float(ph) / LOGICAL_H)
+    host.mat = Mat(a: sc, b: 0, c: 0, d: sc,
+                   e: (Float(pw) - LOGICAL_W * sc) / 2,
+                   f: (Float(ph) - LOGICAL_H * sc) / 2)
+    host.stack = []
+    host.alpha = 1
+    let c = host.fcolor(rgba)
+    _ = SDL_SetRenderDrawColorFloat(host.renderer, c.r, c.g, c.b, 1)
+    _ = SDL_RenderClear(host.renderer)
 }
 
-func uval(_ args: UnsafePointer<wasmtime_val_t>?, _ i: Int) -> UInt32 {
-    UInt32(bitPattern: ival(args, i))
+@_cdecl("wamr_gfx_save")
+func wamr_gfx_save(_ e: OpaquePointer?) { host.stack.append(host.mat) }
+
+@_cdecl("wamr_gfx_restore")
+func wamr_gfx_restore(_ e: OpaquePointer?) {
+    if let m = host.stack.popLast() { host.mat = m }
 }
 
-let trampoline: wasmtime_func_callback_t = { env, _, args, nargs, results, nresults in
-    let fn = Int(bitPattern: env) - 1
-    var ret: Int32 = 0
-    switch fn {
-    case 0: // gfx_clear
-        // Render in NATIVE pixels: the logical->pixel scale plus letterbox
-        // offset live in the base matrix (the web runtime's baseScale/offX/
-        // offY), so geometry stays crisp at any window or fullscreen size.
-        var pw: Int32 = 0
-        var ph: Int32 = 0
-        _ = SDL_GetRenderOutputSize(host.renderer, &pw, &ph)
-        let sc = min(Float(pw) / LOGICAL_W, Float(ph) / LOGICAL_H)
-        host.base = Mat(a: sc, b: 0, c: 0, d: sc,
-                        e: (Float(pw) - LOGICAL_W * sc) / 2,
-                        f: (Float(ph) - LOGICAL_H * sc) / 2)
-        host.mat = host.base
-        host.stack = []
-        host.alpha = 1
-        let c = host.fcolor(uval(args, 0))
-        _ = SDL_SetRenderDrawColorFloat(host.renderer, c.r, c.g, c.b, 1)
-        _ = SDL_RenderClear(host.renderer)
-    case 1: host.stack.append(host.mat)
-    case 2: if let m = host.stack.popLast() { host.mat = m }
-    case 3: host.mat.mul(Mat(a: 1, b: 0, c: 0, d: 1, e: fval(args, 0), f: fval(args, 1)))
-    case 4:
-        let r = fval(args, 0) * Float.pi / 180
-        host.mat.mul(Mat(a: SDL_cosf(r), b: SDL_sinf(r), c: -SDL_sinf(r), d: SDL_cosf(r), e: 0, f: 0))
-    case 5: host.mat.mul(Mat(a: fval(args, 0), b: 0, c: 0, d: fval(args, 1), e: 0, f: 0))
-    case 6: host.alpha = fval(args, 0)
-    case 7: // gfx_stroke_poly
-        let n = Int(ival(args, 1))
-        let f = host.floats(ival(args, 0), n * 2)
-        var pts = [SDL_FPoint]()
-        pts.reserveCapacity(n)
-        for i in 0..<n { pts.append(host.mat.apply(f[i * 2], f[i * 2 + 1])) }
-        host.strokePoly(pts, closed: ival(args, 2) != 0, thickness: fval(args, 3), rgba: uval(args, 4))
-    case 8: // gfx_fill_poly
-        let n = Int(ival(args, 1))
-        let f = host.floats(ival(args, 0), n * 2)
-        var pts = [SDL_FPoint]()
-        pts.reserveCapacity(n)
-        for i in 0..<n { pts.append(host.mat.apply(f[i * 2], f[i * 2 + 1])) }
-        host.fillPoly(pts, rgba: uval(args, 2))
-    case 9: host.fillPoly(host.circlePts(fval(args, 0), fval(args, 1), fval(args, 2)), rgba: uval(args, 3))
-    case 10:
-        host.strokePoly(host.circlePts(fval(args, 0), fval(args, 1), fval(args, 2)),
-                        closed: true, thickness: fval(args, 3), rgba: uval(args, 4))
-    case 11:
-        let x = fval(args, 0), y = fval(args, 1), w = fval(args, 2), h = fval(args, 3)
-        host.fillPoly([host.mat.apply(x, y), host.mat.apply(x + w, y),
-                       host.mat.apply(x + w, y + h), host.mat.apply(x, y + h)], rgba: uval(args, 4))
-    case 12:
-        let x = fval(args, 0), y = fval(args, 1), w = fval(args, 2), h = fval(args, 3)
-        host.strokePoly([host.mat.apply(x, y), host.mat.apply(x + w, y),
-                         host.mat.apply(x + w, y + h), host.mat.apply(x, y + h)],
-                        closed: true, thickness: fval(args, 4), rgba: uval(args, 5))
-    case 13: // evt_poll
-        if let e = popEvent() {
-            host.writeI32(ival(args, 0), e.0)
-            host.writeI32(ival(args, 1), e.1)
-            host.writeI32(ival(args, 2), e.2)
-            host.writeI32(ival(args, 3), e.3)
-            host.writeI32(ival(args, 4), e.4)
-            ret = 1
-        } else {
-            ret = 0
-        }
-    case 14: ret = host.loadSound(host.str(ival(args, 0), ival(args, 1)))
-    case 15:
-        ret = host.play(ival(args, 0), volume: fval(args, 1), loop: ival(args, 2) != 0)
-    case 16: // store_get
-        if let v = host.storeGet(host.str(ival(args, 0), ival(args, 1))) {
-            let bytes = Array(v.utf8)
-            let cap = Int(ival(args, 3))
-            let n = min(bytes.count, cap)
-            for i in 0..<n { host.memoryBase![Int(ival(args, 2)) + i] = bytes[i] }
-            ret = Int32(n)
-        } else {
-            ret = -1
-        }
-    case 17: host.storeSet(host.str(ival(args, 0), ival(args, 1)), host.str(ival(args, 2), ival(args, 3)))
-    case 18: host.stopVoice(ival(args, 0))
-    case 19: host.setVoiceVolume(ival(args, 0), fval(args, 1))
-    case 20: host.setVoicePan(ival(args, 0), fval(args, 1))
-    default:
-        break
+@_cdecl("wamr_gfx_translate")
+func wamr_gfx_translate(_ e: OpaquePointer?, _ x: Float, _ y: Float) {
+    host.mat.mul(Mat(a: 1, b: 0, c: 0, d: 1, e: x, f: y))
+}
+
+@_cdecl("wamr_gfx_rotate")
+func wamr_gfx_rotate(_ e: OpaquePointer?, _ degrees: Float) {
+    let r = degrees * Float.pi / 180
+    host.mat.mul(Mat(a: SDL_cosf(r), b: SDL_sinf(r), c: -SDL_sinf(r), d: SDL_cosf(r), e: 0, f: 0))
+}
+
+@_cdecl("wamr_gfx_scale")
+func wamr_gfx_scale(_ e: OpaquePointer?, _ sx: Float, _ sy: Float) {
+    host.mat.mul(Mat(a: sx, b: 0, c: 0, d: sy, e: 0, f: 0))
+}
+
+@_cdecl("wamr_gfx_set_alpha")
+func wamr_gfx_set_alpha(_ e: OpaquePointer?, _ a: Float) { host.alpha = a }
+
+@_cdecl("wamr_gfx_set_blend")
+func wamr_gfx_set_blend(_ e: OpaquePointer?, _ mode: Int32) {}
+
+@_cdecl("wamr_gfx_stroke_poly")
+func wamr_gfx_stroke_poly(_ e: OpaquePointer?, _ xy: UnsafePointer<Float>?, _ n: Int32,
+                          _ closed: Int32, _ t: Float, _ rgba: UInt32) {
+    guard let xy, n >= 2 else { return }
+    var pts = [SDL_FPoint]()
+    pts.reserveCapacity(Int(n))
+    for i in 0..<Int(n) { pts.append(host.mat.apply(xy[i * 2], xy[i * 2 + 1])) }
+    host.strokePoly(pts, closed: closed != 0, thickness: t, rgba: rgba)
+}
+
+@_cdecl("wamr_gfx_fill_poly")
+func wamr_gfx_fill_poly(_ e: OpaquePointer?, _ xy: UnsafePointer<Float>?, _ n: Int32, _ rgba: UInt32) {
+    guard let xy, n >= 3 else { return }
+    var pts = [SDL_FPoint]()
+    pts.reserveCapacity(Int(n))
+    for i in 0..<Int(n) { pts.append(host.mat.apply(xy[i * 2], xy[i * 2 + 1])) }
+    host.fillPoly(pts, rgba: rgba)
+}
+
+@_cdecl("wamr_gfx_fill_circle")
+func wamr_gfx_fill_circle(_ e: OpaquePointer?, _ cx: Float, _ cy: Float, _ r: Float, _ rgba: UInt32) {
+    host.fillPoly(host.circlePts(cx, cy, r), rgba: rgba)
+}
+
+@_cdecl("wamr_gfx_stroke_circle")
+func wamr_gfx_stroke_circle(_ e: OpaquePointer?, _ cx: Float, _ cy: Float, _ r: Float,
+                            _ t: Float, _ rgba: UInt32) {
+    host.strokePoly(host.circlePts(cx, cy, r), closed: true, thickness: t, rgba: rgba)
+}
+
+@_cdecl("wamr_gfx_fill_rect")
+func wamr_gfx_fill_rect(_ e: OpaquePointer?, _ x: Float, _ y: Float, _ w: Float, _ h: Float, _ rgba: UInt32) {
+    host.fillPoly([host.mat.apply(x, y), host.mat.apply(x + w, y),
+                   host.mat.apply(x + w, y + h), host.mat.apply(x, y + h)], rgba: rgba)
+}
+
+@_cdecl("wamr_gfx_stroke_rect")
+func wamr_gfx_stroke_rect(_ e: OpaquePointer?, _ x: Float, _ y: Float, _ w: Float, _ h: Float,
+                          _ t: Float, _ rgba: UInt32) {
+    host.strokePoly([host.mat.apply(x, y), host.mat.apply(x + w, y),
+                     host.mat.apply(x + w, y + h), host.mat.apply(x, y + h)],
+                    closed: true, thickness: t, rgba: rgba)
+}
+
+@_cdecl("wamr_evt_poll")
+func wamr_evt_poll(_ e: OpaquePointer?,
+                   _ type: UnsafeMutablePointer<Int32>?, _ a: UnsafeMutablePointer<Int32>?,
+                   _ b: UnsafeMutablePointer<Int32>?, _ c: UnsafeMutablePointer<Int32>?,
+                   _ d: UnsafeMutablePointer<Int32>?) -> Int32 {
+    guard let ev = popEvent() else { return 0 }
+    type?.pointee = ev.0
+    a?.pointee = ev.1
+    b?.pointee = ev.2
+    c?.pointee = ev.3
+    d?.pointee = ev.4
+    return 1
+}
+
+@_cdecl("wamr_snd_by_name")
+func wamr_snd_by_name(_ e: OpaquePointer?, _ name: UnsafePointer<CChar>?, _ len: Int32) -> Int32 {
+    host.loadSound(host.cString(name, len))
+}
+
+@_cdecl("wamr_snd_play")
+func wamr_snd_play(_ e: OpaquePointer?, _ buffer: Int32, _ volume: Float, _ loop: Int32) -> Int32 {
+    host.play(buffer, volume: volume, loop: loop != 0)
+}
+
+@_cdecl("wamr_snd_stop")
+func wamr_snd_stop(_ e: OpaquePointer?, _ voice: Int32) { host.stopVoice(voice) }
+
+@_cdecl("wamr_snd_set_volume")
+func wamr_snd_set_volume(_ e: OpaquePointer?, _ voice: Int32, _ volume: Float) {
+    host.setVoiceVolume(voice, volume)
+}
+
+@_cdecl("wamr_snd_set_pan")
+func wamr_snd_set_pan(_ e: OpaquePointer?, _ voice: Int32, _ pan: Float) {
+    host.setVoicePan(voice, pan)
+}
+
+@_cdecl("wamr_store_get")
+func wamr_store_get(_ e: OpaquePointer?, _ key: UnsafePointer<CChar>?, _ klen: Int32,
+                    _ buf: UnsafeMutablePointer<CChar>?, _ cap: Int32) -> Int32 {
+    guard let v = host.storeGet(host.cString(key, klen)) else { return -1 }
+    let bytes = Array(v.utf8)
+    let n = min(bytes.count, Int(cap))
+    if let buf {
+        for i in 0..<n { buf[i] = CChar(bitPattern: bytes[i]) }
     }
-    if nresults > 0 {
-        results![0].kind = UInt8(WASMTIME_I32)
-        results![0].of.i32 = ret
-    }
-    return nil
+    return Int32(n)
 }
 
-func fnIndex(_ name: String) -> Int {
-    for (i, n) in fnNames.enumerated() where n == name { return i }
-    return -1
+@_cdecl("wamr_store_set")
+func wamr_store_set(_ e: OpaquePointer?, _ key: UnsafePointer<CChar>?, _ klen: Int32,
+                    _ val: UnsafePointer<CChar>?, _ vlen: Int32) {
+    host.storeSet(host.cString(key, klen), host.cString(val, vlen))
 }
+
+@_cdecl("wamr_gp_connected")
+func wamr_gp_connected(_ e: OpaquePointer?, _ pad: Int32) -> Int32 { 0 }
+
 
 // SDL scancode -> SFML key code (the ABI's event vocabulary)
 func sfKey(_ scancode: UInt32) -> Int32 {
@@ -535,106 +558,67 @@ enum Main {
         _ = SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND)
         host.renderer = renderer
 
-        // wasmtime: engine + store + WASI + linker with the env surface bound
-        let engine = wasm_engine_new()
-        let wstore = wasmtime_store_new(engine, nil, nil)
-        let context = wasmtime_store_context(wstore)
-        let wasiConfig = wasi_config_new()
-        wasi_config_inherit_stdout(wasiConfig)
-        wasi_config_inherit_stderr(wasiConfig)
-        _ = wasmtime_context_set_wasi(context, wasiConfig)
+        // WAMR: init, register the env natives, load the cart, instantiate
+        guard wasm_runtime_init() else { fatalError("wamr init failed") }
+        guard kitRegisterNatives() else { fatalError("native registration failed") }
 
         var size = 0
         let wasmData = wasmPath.withCString { SDL_LoadFile($0, &size) }
         guard let wasmData else { fatalError("cartridge wasm not found") }
-        var module: OpaquePointer? = nil
-        _ = wasmtime_module_new(engine, UnsafeRawPointer(wasmData).bindMemory(to: UInt8.self, capacity: size),
-                                size, &module)
-        guard let module else { fatalError("wasm compile failed") }
-        SDL_free(wasmData)
-
-        let linker = wasmtime_linker_new(engine)
-        _ = wasmtime_linker_define_wasi(linker)
-
-        var importTypes = wasm_importtype_vec_t()
-        wasmtime_module_imports(module, &importTypes)
-        var bound = 0
-        var stubbed = 0
-        for i in 0..<importTypes.size {
-            guard let imp = importTypes.data[i] else { continue }
-            let modName = wasm_importtype_module(imp)!.pointee
-            var isEnv = modName.size == 3
-            if isEnv {
-                isEnv = modName.data[0] == 101 && modName.data[1] == 110 && modName.data[2] == 118
-            }
-            guard isEnv else { continue }
-            let nm = wasm_importtype_name(imp)!.pointee
-            var nameBytes = [UInt8]()
-            for j in 0..<nm.size { nameBytes.append(UInt8(bitPattern: nm.data[j])) }
-            nameBytes.append(0)
-            let name = nameBytes.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
-            guard let ftype = wasm_externtype_as_functype_const(wasm_importtype_type(imp)) else { continue }
-            let idx = fnIndex(name)
-            let env = UnsafeMutableRawPointer(bitPattern: idx + 1)
-            _ = name.withCString { cname in
-                "env".withCString { cenv in
-                    wasmtime_linker_define_func(linker, cenv, 3, cname, name.utf8.count,
-                                                ftype, trampoline, env, nil)
-                }
-            }
-            if idx >= 0 { bound += 1 } else { stubbed += 1 }
+        var errBuf = [CChar](repeating: 0, count: 128)
+        let module = errBuf.withUnsafeMutableBufferPointer { eb in
+            wasm_runtime_load(wasmData.bindMemory(to: UInt8.self, capacity: size),
+                              UInt32(size), eb.baseAddress, UInt32(eb.count))
         }
+        guard let module else { fatalError("wasm load failed") }
 
-        var instance = wasmtime_instance_t()
-        var trap: OpaquePointer? = nil
-        let err = wasmtime_linker_instantiate(linker, context, module, &instance, &trap)
-        guard err == nil, trap == nil else { fatalError("instantiate failed") }
+        wasm_runtime_set_wasi_args(module, nil, 0, nil, 0, nil, 0, nil, 0)
 
-        func export(_ name: String) -> wasmtime_extern_t {
-            var ext = wasmtime_extern_t()
-            _ = name.withCString { wasmtime_instance_export_get(context, &instance, $0, name.utf8.count, &ext) }
-            return ext
+        let instance = errBuf.withUnsafeMutableBufferPointer { eb in
+            wasm_runtime_instantiate(module, 256 * 1024, 0, eb.baseAddress, UInt32(eb.count))
         }
+        guard let instance else { fatalError("wasm instantiate failed") }
 
-        var memExt = export("memory")
-
-        func call(_ name: String, _ arg: Double? = nil) {
-            var fn = export(name)
-            var trap: OpaquePointer? = nil
-            if let arg {
-                var a = wasmtime_val_t()
-                a.kind = UInt8(WASMTIME_F64)
-                a.of.f64 = arg
-                _ = wasmtime_func_call(context, &fn.of.func, &a, 1, nil, 0, &trap)
-            } else {
-                _ = wasmtime_func_call(context, &fn.of.func, nil, 0, nil, 0, &trap)
-            }
-            if trap != nil { fatalError("wasm trapped") }
-        }
-
-        host.memoryBase = wasmtime_memory_data(context, &memExt.of.memory)
-        call("_initialize")
-        call("boot")
+        let bound = 24
+        let stubbed = 99 - bound
         print("WasmCart: \(bound) env fns live, \(stubbed) auto-stubbed")
 
         evtMutex = SDL_CreateMutex()
 
         // everything the game thread needs, hoisted
         struct GameCtx {
-            var context: OpaquePointer?
-            var memExt: wasmtime_extern_t
-            var frameFn: wasmtime_extern_t
+            var instance: wasm_module_inst_t?
             var renderer: OpaquePointer?
             var selftest: Float
         }
-        var frameExt = export("frame")
         let ctxBox = UnsafeMutablePointer<GameCtx>.allocate(capacity: 1)
-        ctxBox.initialize(to: GameCtx(context: context, memExt: memExt,
-                                      frameFn: frameExt, renderer: renderer,
+        ctxBox.initialize(to: GameCtx(instance: instance, renderer: renderer,
                                       selftest: selftest))
 
         let gameThread = SDL_CreateThreadRuntime({ raw in
             let ctx = raw!.assumingMemoryBound(to: GameCtx.self)
+            // WAMR requires explicit thread-env registration off the main thread
+            _ = wasm_runtime_init_thread_env()
+            let inst = ctx.pointee.instance
+            guard let exec = wasm_runtime_create_exec_env(inst, 256 * 1024) else {
+                SDL_SetAtomicInt(&runFlag, 0)
+                return 1
+            }
+            // reactor start: _initialize then boot, on THIS thread
+            if let initFn = "_initialize".withCString({ wasm_runtime_lookup_function(inst, $0) }) {
+                _ = wasm_runtime_call_wasm(exec, initFn, 0, nil)
+            }
+            guard let bootFn = "boot".withCString({ wasm_runtime_lookup_function(inst, $0) }),
+                  let frameFn = "frame".withCString({ wasm_runtime_lookup_function(inst, $0) }) else {
+                SDL_SetAtomicInt(&runFlag, 0)
+                return 1
+            }
+            _ = wasm_runtime_call_wasm(exec, bootFn, 0, nil)
+            if let ex = wasm_runtime_get_exception(inst) {
+                print("boot trapped: " + String(cString: ex))
+                SDL_SetAtomicInt(&runFlag, 0)
+            }
+
             var last = SDL_GetTicksNS()
             var elapsedMs: Float = 0
             var frames = 0
@@ -646,14 +630,14 @@ enum Main {
                 last = now
                 if dt > 50 { dt = 50 }
 
-                // memory can grow mid-play; re-derive the base every frame
-                host.memoryBase = wasmtime_memory_data(ctx.pointee.context, &ctx.pointee.memExt.of.memory)
-                var arg = wasmtime_val_t()
-                arg.kind = UInt8(WASMTIME_F64)
+                var arg = wasm_val_t()
+                arg.kind = wasm_valkind_t(WASM_F64.rawValue)
                 arg.of.f64 = Double(dt)
-                var trap: OpaquePointer? = nil
-                _ = wasmtime_func_call(ctx.pointee.context, &ctx.pointee.frameFn.of.func, &arg, 1, nil, 0, &trap)
-                if trap != nil { SDL_SetAtomicInt(&runFlag, 0) }
+                _ = wasm_runtime_call_wasm_a(exec, frameFn, 0, nil, 1, &arg)
+                if let ex = wasm_runtime_get_exception(inst) {
+                    print("frame trapped: " + String(cString: ex))
+                    SDL_SetAtomicInt(&runFlag, 0)
+                }
                 host.reapVoices()
                 _ = SDL_RenderPresent(ctx.pointee.renderer)
 
@@ -683,8 +667,10 @@ enum Main {
                 let used = SDL_GetTicksNS() - now
                 if used < 16_666_666 { SDL_DelayNS(16_666_666 - used) }
             }
+            wasm_runtime_destroy_exec_env(exec)
+            wasm_runtime_destroy_thread_env()
             return 0
-        }, "game", UnsafeMutableRawPointer(ctxBox), nil, nil)
+                }, "game", UnsafeMutableRawPointer(ctxBox), nil, nil)
 
         // main thread: nothing but the OS event pump. Menus and drags can
         // block here all they like; the game thread never notices.

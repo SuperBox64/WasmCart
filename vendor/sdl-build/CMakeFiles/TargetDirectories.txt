@@ -1,0 +1,10 @@
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/SDL3-static.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/uninstall.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/package.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/package_source.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/edit_cache.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/rebuild_cache.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/list_install_components.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/install.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/install/local.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/CMakeFiles/install/strip.dir

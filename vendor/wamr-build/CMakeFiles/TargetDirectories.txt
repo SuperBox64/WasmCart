@@ -1,0 +1,8 @@
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/CMakeFiles/iwasm.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/CMakeFiles/vmlib.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/CMakeFiles/edit_cache.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/CMakeFiles/rebuild_cache.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/CMakeFiles/list_install_components.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/CMakeFiles/install.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/CMakeFiles/install/local.dir
+/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/CMakeFiles/install/strip.dir

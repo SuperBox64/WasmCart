@@ -19,14 +19,14 @@ Releases carry the host binaries and `{game}-cart.zip` files.
 
 ## Host
 
-Embedded Swift (no Swift stdlib, no Foundation) talking to SDL3 and the
-wasmtime C API through C interop, about 190 KB. The env import surface is
-bound from each module's own import table, so new games keep working
-without host changes.
+Embedded Swift (no Swift stdlib, no Foundation) talking to SDL3 and WAMR
+through C interop. BOTH dependencies are vendored and built from source -
+static, no package managers, no dylibs - and the sealed binary is about
+1.6 MB. Cartridges are core wasm + WASI Preview 1, exactly what the Swift
+wasm toolchain emits.
 
 ```
-brew install sdl3 wasmtime
-./build.sh                  # builds WasmCart
+./build.sh                  # vendors SDL3 + WAMR, builds WasmCart
 HOST_NAME=WasmUp ./build.sh # the reserved-name variant
 ```
 

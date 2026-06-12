@@ -129,6 +129,43 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
     return (data, Int(size))
 }
 
+// Sounds load through the Kit's disk path (SDL_LoadWAV from assetDir), so
+// .wav entries are extracted from the zip into the pref dir at insert time.
+func extractZipSounds(_ archive: OpaquePointer, _ zipBase: String) -> String? {
+    guard let pref = ("SuperBox64".withCString { org in "WasmCart".withCString { SDL_GetPrefPath(org, $0) } }) else { return nil }
+    let dir = String(cString: pref) + zipBase + ".assets"
+    SDL_free(UnsafeMutableRawPointer(mutating: pref))
+    guard dir.withCString({ SDL_CreateDirectory($0) }) else {
+        print("ERROR: failed to create \(dir)")
+        return nil
+    }
+
+    let numFiles = zip_get_num_files(archive)
+    var nameBuf = [CChar](repeating: 0, count: 256)
+    for i in 0..<numFiles {
+        var size: size_t = 0
+        guard zip_get_file_info(archive, UInt32(i), &nameBuf, nameBuf.count, &size) == 0 else { continue }
+        let name = String(cString: nameBuf)
+        guard name.hasSuffix(".wav"), size > 0 else { continue }
+        var fileBase = name
+        if let slash = name.utf8.lastIndex(of: 47) {
+            fileBase = String(name[name.index(after: slash)...])
+        }
+        guard let file = zip_fopen(archive, name) else { continue }
+        guard let data = SDL_malloc(size) else { zip_fclose(file); continue }
+        let read = zip_fread(data, size, file)
+        zip_fclose(file)
+        if read == size {
+            let outPath = dir + "/" + fileBase
+            if !(outPath.withCString { SDL_SaveFile($0, data, size) }) {
+                print("ERROR: failed to write \(outPath)")
+            }
+        }
+        SDL_free(data)
+    }
+    return dir
+}
+
 // MARK: - main
 
 @main
@@ -226,10 +263,23 @@ enum Main {
                     wasm_runtime_deinstantiate(i); wasm_runtime_unload(m); SDL_free(data); return
                 }
 
+                var dir = path
                 var base = path
                 if let slash = path.utf8.lastIndex(of: 47) {
+                    dir = String(path[..<slash])
                     base = String(path[path.index(after: slash)...])
+                } else {
+                    dir = "."
                 }
+
+                if path.hasSuffix(".zip") {
+                    if let z = currentZipArchive, let soundDir = extractZipSounds(z, base) {
+                        Kit.shared.assetDir = soundDir
+                    }
+                } else {
+                    Kit.shared.assetDir = dir + "/assets/sfx"
+                }
+
                 if let pref = ("SuperBox64".withCString { org in "WasmCart".withCString { SDL_GetPrefPath(org, $0) } }) {
                     Kit.shared.storePath = String(cString: pref) + base + ".store.tsv"
                     SDL_free(UnsafeMutableRawPointer(mutating: pref))

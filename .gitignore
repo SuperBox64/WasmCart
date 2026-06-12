@@ -3,5 +3,6 @@ WasmUp
 native-selftest.bmp
 .native-store.tsv
 *.zip
-vendor/
+vendor/*
+!vendor/natives.c
 !carts/*.zip

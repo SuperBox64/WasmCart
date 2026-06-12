@@ -107,8 +107,8 @@ static void stub_gfx_shader_set_uniform_v4(wasm_exec_env_t e, int shader, const 
 static void stub_gfx_shader_set_uniform_t(wasm_exec_env_t e, int shader, const char* name, int nlen, int img) {}
 static void stub_gfx_shader_draw(wasm_exec_env_t e, int shader, int srcImg, float dstX, float dstY, float dstW, float dstH, float time, uint32_t colorRgba) {}
 static void stub_gfx_lighting_draw(wasm_exec_env_t e, int srcImg, int normalImg, const float* lights, int lightCount, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) {}
-static void stub_gfx_warp_draw(wasm_exec_env_t e, int srcImg, int cols, int rows, const float* srcUV, const float* dstXY, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) {}
-static void stub_gfx_3d_draw_billboard(wasm_exec_env_t e, int srcImg, float camX, float camY, float camZ, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) {}
+static void wamr_gfx_warp_draw(wasm_exec_env_t e, int srcImg, int cols, int rows, const float* srcUV, const float* dstXY, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) { gfx_warp_draw(srcImg, cols, rows, srcUV, dstXY, dstX, dstY, dstW, dstH, colorRgba); }
+static void wamr_gfx_3d_draw_billboard(wasm_exec_env_t e, int srcImg, float camX, float camY, float camZ, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) { gfx_3d_draw_billboard(srcImg, camX, camY, camZ, dstX, dstY, dstW, dstH, colorRgba); }
 static int wamr_gfx_upload_pixels(wasm_exec_env_t e, int img, int w, int h, const uint8_t* rgba, int len) { return gfx_upload_pixels(img, w, h, rgba, len); }
 static int wamr_store_get(wasm_exec_env_t e, const char* a0, int a1, char* a2, int a3) { return store_get(a0, a1, a2, a3); }
 static void wamr_store_set(wasm_exec_env_t e, const char* a0, int a1, const char* a2, int a3) { store_set(a0, a1, a2, a3); }
@@ -208,8 +208,8 @@ NativeSymbol kit_natives[] = {
     { "gfx_shader_set_uniform_t", (void *)stub_gfx_shader_set_uniform_t, "(i*~i)", NULL },
     { "gfx_shader_draw", (void *)stub_gfx_shader_draw, "(iifffffi)", NULL },
     { "gfx_lighting_draw", (void *)stub_gfx_lighting_draw, "(ii*~ffffi)", NULL },
-    { "gfx_warp_draw", (void *)stub_gfx_warp_draw, "(iii**ffffi)", NULL },
-    { "gfx_3d_draw_billboard", (void *)stub_gfx_3d_draw_billboard, "(ifffffffi)", NULL },
+    { "gfx_warp_draw", (void *)wamr_gfx_warp_draw, "(iii**ffffi)", NULL },
+    { "gfx_3d_draw_billboard", (void *)wamr_gfx_3d_draw_billboard, "(ifffffffi)", NULL },
     { "gfx_upload_pixels", (void *)wamr_gfx_upload_pixels, "(iii*~)i", NULL },
     { "store_get", (void *)wamr_store_get, "(*~*~)i", NULL },
     { "store_set", (void *)wamr_store_set, "(*~*~)", NULL },

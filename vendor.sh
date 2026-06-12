@@ -15,7 +15,7 @@ if [ ! -f vendor/libSDL3.a ]; then
     -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF \
     -DSDL_CAMERA=OFF -DSDL_SENSOR=OFF -DSDL_HAPTIC=OFF -DSDL_GPU=OFF \
     -DSDL_VULKAN=OFF -DSDL_DIALOG=ON -DSDL_POWER=OFF -DSDL_OPENGL=OFF -DSDL_OPENGLES=OFF \
-    -DSDL_JOYSTICK=OFF -DSDL_HIDAPI=OFF >/dev/null
+    -DSDL_JOYSTICK=ON -DSDL_HIDAPI=ON >/dev/null
   cmake --build vendor/sdl-build -j >/dev/null
   cp vendor/sdl-build/libSDL3.a vendor/
 fi

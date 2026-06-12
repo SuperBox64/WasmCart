@@ -129,17 +129,10 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
     return (data, Int(size))
 }
 
-// Sounds load through the Kit's disk path (SDL_LoadWAV from assetDir), so
-// .wav entries are extracted from the zip into the pref dir at insert time.
-func extractZipSounds(_ archive: OpaquePointer, _ zipBase: String) -> String? {
-    guard let pref = ("SuperBox64".withCString { org in "WasmCart".withCString { SDL_GetPrefPath(org, $0) } }) else { return nil }
-    let dir = String(cString: pref) + zipBase + ".assets"
-    SDL_free(UnsafeMutableRawPointer(mutating: pref))
-    guard dir.withCString({ SDL_CreateDirectory($0) }) else {
-        print("ERROR: failed to create \(dir)")
-        return nil
-    }
-
+// Preload every .wav entry straight from the zip into the Kit's sound
+// table (same registration shape as loadSoundImpl, keyed by basename).
+// Nothing is extracted to disk; the cart's snd_by_name hits the cache.
+func preloadZipSounds(_ archive: OpaquePointer) {
     let numFiles = zip_get_num_files(archive)
     var nameBuf = [CChar](repeating: 0, count: 256)
     for i in 0..<numFiles {
@@ -147,23 +140,31 @@ func extractZipSounds(_ archive: OpaquePointer, _ zipBase: String) -> String? {
         guard zip_get_file_info(archive, UInt32(i), &nameBuf, nameBuf.count, &size) == 0 else { continue }
         let name = String(cString: nameBuf)
         guard name.hasSuffix(".wav"), size > 0 else { continue }
-        var fileBase = name
+        var base = name
         if let slash = name.utf8.lastIndex(of: 47) {
-            fileBase = String(name[name.index(after: slash)...])
+            base = String(name[name.index(after: slash)...])
         }
+        if Kit.shared.soundNames[base] != nil { continue }
         guard let file = zip_fopen(archive, name) else { continue }
         guard let data = SDL_malloc(size) else { zip_fclose(file); continue }
         let read = zip_fread(data, size, file)
         zip_fclose(file)
-        if read == size {
-            let outPath = dir + "/" + fileBase
-            if !(outPath.withCString { SDL_SaveFile($0, data, size) }) {
-                print("ERROR: failed to write \(outPath)")
-            }
+        var spec = SDL_AudioSpec()
+        var buf: UnsafeMutablePointer<UInt8>? = nil
+        var len: UInt32 = 0
+        if read == size, let io = SDL_IOFromConstMem(data, size) {
+            _ = SDL_LoadWAV_IO(io, true, &spec, &buf, &len)
         }
         SDL_free(data)
+        guard let buf else {
+            print("ERROR: bad wav in zip: \(name)")
+            continue
+        }
+        Kit.shared.soundNames[base] = Int32(Kit.shared.soundSpecs.count)
+        Kit.shared.soundSpecs.append(spec)
+        Kit.shared.soundBufs.append(buf)
+        Kit.shared.soundLens.append(len)
     }
-    return dir
 }
 
 // MARK: - main
@@ -273,9 +274,7 @@ enum Main {
                 }
 
                 if path.hasSuffix(".zip") {
-                    if let z = currentZipArchive, let soundDir = extractZipSounds(z, base) {
-                        Kit.shared.assetDir = soundDir
-                    }
+                    if let z = currentZipArchive { preloadZipSounds(z) }
                 } else {
                     Kit.shared.assetDir = dir + "/assets/sfx"
                 }

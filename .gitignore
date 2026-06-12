@@ -4,3 +4,4 @@ native-selftest.bmp
 .native-store.tsv
 *.zip
 vendor/
+!carts/*.zip

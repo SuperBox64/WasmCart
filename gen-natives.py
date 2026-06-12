@@ -58,8 +58,20 @@ for p in protos:
         continue
     name, sig, ret, ctypes = sig_and_params(p)
     if name in implemented:
-        cargs = ", ".join(["wasm_exec_env_t e"] + ctypes) if ctypes else "wasm_exec_env_t e"
-        lines.append(f"extern {ret} wamr_{name}({cargs});")
+        # a C adapter: drop WAMR's exec_env and call the backend's KitABI
+        # symbol straight through (declared by KitABI.h, linked from the
+        # framework backend) - zero hand-written glue
+        params = []
+        argnames = []
+        for idx, ct in enumerate(ctypes):
+            argname = f"a{idx}"
+            base = re.sub(r"\b[a-zA-Z_0-9]+$", "", ct).strip() or ct
+            params.append(f"{base} {argname}")
+            argnames.append(argname)
+        cargs = ", ".join(["wasm_exec_env_t e"] + params) if params else "wasm_exec_env_t e"
+        callargs = ", ".join(argnames)
+        retkw = "return " if ret != "void" else ""
+        lines.append(f"static {ret} wamr_{name}({cargs}) {{ {retkw}{name}({callargs}); }}")
         entries.append((name, f"wamr_{name}", sig))
     else:
         cargs = ", ".join(["wasm_exec_env_t e"] + ctypes) if ctypes else "wasm_exec_env_t e"

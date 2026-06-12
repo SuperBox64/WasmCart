@@ -39,7 +39,7 @@ final class ShellScene: SKScene {
 
         vectorText("INSERT CARTRIDGE", at: CGPoint(x: size.width / 2, y: size.height * 0.33), scale: 1.6, alpha: 0.75)
         vectorText("CLICK OR DROP A WASM TO LOAD", at: CGPoint(x: size.width / 2, y: size.height * 0.26), scale: 1.0, alpha: 0.6)
-        vectorText("ESC EJECTS", at: CGPoint(x: size.width / 2, y: size.height * 0.21), scale: 1.0, alpha: 0.6)
+        vectorText("CTRL ESC EJECTS", at: CGPoint(x: size.width / 2, y: size.height * 0.21), scale: 1.0, alpha: 0.6)
     }
 
     override func mouseDown(with event: NSEvent) {

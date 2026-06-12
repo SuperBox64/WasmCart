@@ -5,7 +5,7 @@
 //
 //   ./WasmCart                 empty slot: click or drop a wasm to load
 //   CARTRIDGE_WASM=... ./WasmCart
-//   ESC ejects back to the shell.
+//   CTRL+ESC ejects back to the shell.
 import SpriteKit
 import CSDL3
 import CWamr

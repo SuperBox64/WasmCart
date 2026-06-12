@@ -1,4 +1,0 @@
-module CWamr {
-    header "shim.h"
-    export *
-}

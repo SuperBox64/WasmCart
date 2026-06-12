@@ -80,6 +80,25 @@ func zipAssetBytes(_ name: String) -> [UInt8]? {
     return nil
 }
 
+// A bare .wasm cart plays exactly like its zip: the wasm's folder is the
+// cart root, so assets and manifest.json resolve beside it
+nonisolated(unsafe) var cartDir: String? = nil
+
+func dirAssetBytes(_ name: String) -> [UInt8]? {
+    guard let dir = cartDir else { return nil }
+    for candidate in [dir + "/" + name, dir + "/assets/" + name] {
+        var size = 0
+        if let data = candidate.withCString({ SDL_LoadFile($0, &size) }), size > 0 {
+            let bytes = UnsafeRawPointer(data).bindMemory(to: UInt8.self, capacity: size)
+            var out = [UInt8](repeating: 0, count: size)
+            for i in 0..<size { out[i] = bytes[i] }
+            SDL_free(data)
+            return out
+        }
+    }
+    return nil
+}
+
 // Pull an integer out of the cart manifest without a JSON parser:
 // the value after `"key":`, digits only
 func manifestInt(_ json: [UInt8], _ key: String) -> Int? {
@@ -106,7 +125,7 @@ func manifestInt(_ json: [UInt8], _ key: String) -> Int? {
 }
 
 func applyCartManifest() {
-    guard let manifest = zipAssetBytes("manifest.json") else { return }
+    guard let manifest = Kit.shared.assetProvider?("manifest.json") else { return }
     if let w = manifestInt(manifest, "logicalWidth"), let h = manifestInt(manifest, "logicalHeight"), w > 0, h > 0 {
         Kit.shared.logicalW = Float(w)
         Kit.shared.logicalH = Float(h)
@@ -294,6 +313,7 @@ enum Main {
                 if let m2 = module { wasm_runtime_unload(m2) }
                 if let d2 = cartData { SDL_free(d2) }
                 if let z = currentZipArchive { zip_close(z); currentZipArchive = nil; setCurrentZipArchive(nil) }
+                cartDir = nil
                 Kit.shared.assetProvider = nil
                 Kit.shared.logicalW = LOGICAL_W
                 Kit.shared.logicalH = LOGICAL_H
@@ -353,6 +373,9 @@ enum Main {
                     if let z = currentZipArchive { preloadZipSounds(z) }
                 } else {
                     Kit.shared.assetDir = dir + "/assets/sfx"
+                    cartDir = dir
+                    Kit.shared.assetProvider = dirAssetBytes
+                    applyCartManifest()
                 }
 
                 if let pref = ("SuperBox64".withCString { org in "WasmCart".withCString { SDL_GetPrefPath(org, $0) } }) {

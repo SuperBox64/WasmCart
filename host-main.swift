@@ -61,19 +61,37 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
         return nil
     }
 
-    if zip_locate_file(archive, "asteroidz-embedded.wasm") < 0 {
+    var wasmFile: String? = nil
+    let numFiles = zip_get_num_files(archive)
+    var nameBuf = [CChar](repeating: 0, count: 256)
+
+    for i in 0..<numFiles {
+        var size: size_t = 0
+        if zip_get_file_info(archive, UInt32(i), &nameBuf, nameBuf.count, &size) == 0 {
+            let name = String(cString: nameBuf)
+            if name.hasSuffix(".wasm") && !name.contains("/") {
+                wasmFile = name
+                break
+            }
+        }
+    }
+
+    guard let wasmFileName = wasmFile else {
         zip_close(archive)
-        print("wasm file not found in zip")
+        print("no .wasm file found in zip root")
         return nil
     }
 
-    guard let file = zip_fopen(archive, "asteroidz-embedded.wasm") else {
+    guard let file = zip_fopen(archive, wasmFileName) else {
         zip_close(archive)
-        print("failed to open wasm in zip")
+        print("failed to open \(wasmFileName) in zip")
         return nil
     }
 
-    let size = Int(zip_get_current_file_info_size(archive))
+    var size: size_t = 0
+    _ = zip_locate_file(archive, wasmFileName)
+    size = zip_get_current_file_info_size(archive)
+
     guard let data = malloc(size) else {
         zip_fclose(file)
         zip_close(archive)
@@ -86,12 +104,12 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
     if read != size {
         free(data)
         zip_close(archive)
-        print("failed to read wasm from zip")
+        print("failed to read \(wasmFileName) from zip")
         return nil
     }
 
     currentZipArchive = archive
-    return (data, size)
+    return (data, Int(size))
 }
 
 // MARK: - main

@@ -63,6 +63,57 @@ nonisolated(unsafe) var currentFPS = SDL_AtomicInt(value: 0)
 
 // MARK: - zip loading
 
+// Kit asset source while a cart is inserted: images/fonts/levels resolve
+// straight from the cart zip (CZip itself falls back past a single
+// top-level folder prefix, so Finder-zipped carts work too)
+func zipAssetBytes(_ name: String) -> [UInt8]? {
+    guard let archive = currentZipArchive else { return nil }
+    for candidate in [name, "assets/" + name] {
+        if let file = candidate.withCString({ zip_fopen(archive, $0) }) {
+            let size = zip_fget_size(file)
+            var out = [UInt8](repeating: 0, count: size)
+            let read = out.withUnsafeMutableBytes { zip_fread($0.baseAddress, size, file) }
+            zip_fclose(file)
+            return read == size ? out : nil
+        }
+    }
+    return nil
+}
+
+// Pull an integer out of the cart manifest without a JSON parser:
+// the value after `"key":`, digits only
+func manifestInt(_ json: [UInt8], _ key: String) -> Int? {
+    let pat = Array(("\"" + key + "\"").utf8)
+    var i = 0
+    while i + pat.count < json.count {
+        var match = true
+        for j in 0..<pat.count where json[i + j] != pat[j] { match = false; break }
+        if match {
+            var p = i + pat.count
+            while p < json.count, json[p] == 58 || json[p] == 32 { p += 1 }
+            var value = 0
+            var any = false
+            while p < json.count, json[p] >= 48, json[p] <= 57 {
+                value = value * 10 + Int(json[p] - 48)
+                any = true
+                p += 1
+            }
+            return any ? value : nil
+        }
+        i += 1
+    }
+    return nil
+}
+
+func applyCartManifest() {
+    guard let manifest = zipAssetBytes("manifest.json") else { return }
+    if let w = manifestInt(manifest, "logicalWidth"), let h = manifestInt(manifest, "logicalHeight"), w > 0, h > 0 {
+        Kit.shared.logicalW = Float(w)
+        Kit.shared.logicalH = Float(h)
+        print("DEBUG: cart logical size \(w)x\(h)")
+    }
+}
+
 func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size: Int)? {
     print("DEBUG: opening zip: \(zipPath)")
     guard let archive = zip_open(zipPath) else {
@@ -126,6 +177,8 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
 
     currentZipArchive = archive
     setCurrentZipArchive(archive)
+    Kit.shared.assetProvider = zipAssetBytes
+    applyCartManifest()
     print("DEBUG: zip cartridge loaded successfully")
     return (data, Int(size))
 }
@@ -177,6 +230,16 @@ enum Main {
         kitEscapeReserved = true
         kitHostInit(appName: "WasmCart")
 
+        // the console's system emoji font (Noto Color Emoji ships next to the
+        // binary); games fall back to it for codepoints their fonts lack
+        if let base = SDL_GetBasePath() {
+            let path = String(cString: base) + "NotoColorEmoji.ttf"
+            var size = 0
+            if let data = path.withCString({ SDL_LoadFile($0, &size) }), size > 0 {
+                Kit.shared.setEmojiFont(UnsafeRawPointer(data).bindMemory(to: UInt8.self, capacity: size), size)
+            }
+        }
+
         guard wasm_runtime_init() else { fatalError("wamr init failed") }
         guard kitRegisterNatives() else { fatalError("native registration failed") }
 
@@ -222,6 +285,9 @@ enum Main {
                 if let m2 = module { wasm_runtime_unload(m2) }
                 if let d2 = cartData { SDL_free(d2) }
                 if let z = currentZipArchive { zip_close(z); currentZipArchive = nil; setCurrentZipArchive(nil) }
+                Kit.shared.assetProvider = nil
+                Kit.shared.logicalW = LOGICAL_W
+                Kit.shared.logicalH = LOGICAL_H
                 exec = nil; inst = nil; module = nil; cartData = nil; frameFn = nil
                 SDL_SetAtomicInt(&cartLoaded, 0)
                 Kit.shared.stopAllVoices()
@@ -350,7 +416,11 @@ enum Main {
                             Kit.shared.pushEvent((5, 73, 0, 0, 0))
                         }
                         if elapsedMs >= st * 1000 {
-                            print("selftest: \(frames) frames in cart")
+                            if let surf = SDL_RenderReadPixels(Kit.shared.renderer, nil) {
+                                _ = "cart-selftest.bmp".withCString { SDL_SaveBMP(surf, $0) }
+                                SDL_DestroySurface(surf)
+                            }
+                            print("selftest: \(frames) frames in cart -> cart-selftest.bmp")
                             SDL_SetAtomicInt(&runFlag, 0)
                         }
                     }

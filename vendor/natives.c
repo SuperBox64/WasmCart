@@ -114,7 +114,7 @@ static int wamr_store_get(wasm_exec_env_t e, const char* a0, int a1, char* a2, i
 static void wamr_store_set(wasm_exec_env_t e, const char* a0, int a1, const char* a2, int a3) { store_set(a0, a1, a2, a3); }
 static int wamr_asset_exists(wasm_exec_env_t e, const char* name, int len) { return asset_exists(name, len); }
 static int wamr_asset_text(wasm_exec_env_t e, const char* name, int len, char* buf, int cap) { return asset_text(name, len, buf, cap); }
-static int stub_img_polygon_from_alpha(wasm_exec_env_t e, int img, float alphaThreshold, float* out_xy, int cap) { return 0; }
+static int wamr_img_polygon_from_alpha(wasm_exec_env_t e, int img, float alphaThreshold, float* out_xy, int cap) { return img_polygon_from_alpha(img, alphaThreshold, out_xy, cap); }
 static int wamr_key_pressed(wasm_exec_env_t e, int sfKey) { return key_pressed(sfKey); }
 static int wamr_mouse_x(wasm_exec_env_t e) { return mouse_x(); }
 static int wamr_mouse_y(wasm_exec_env_t e) { return mouse_y(); }
@@ -215,7 +215,7 @@ NativeSymbol kit_natives[] = {
     { "store_set", (void *)wamr_store_set, "(*~*~)", NULL },
     { "asset_exists", (void *)wamr_asset_exists, "(*~)i", NULL },
     { "asset_text", (void *)wamr_asset_text, "(*~*~)i", NULL },
-    { "img_polygon_from_alpha", (void *)stub_img_polygon_from_alpha, "(if*~)i", NULL },
+    { "img_polygon_from_alpha", (void *)wamr_img_polygon_from_alpha, "(if*~)i", NULL },
     { "key_pressed", (void *)wamr_key_pressed, "(i)i", NULL },
     { "mouse_x", (void *)wamr_mouse_x, "()i", NULL },
     { "mouse_y", (void *)wamr_mouse_y, "()i", NULL },

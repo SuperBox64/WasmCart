@@ -16,6 +16,9 @@ func kitRegisterNatives() -> Bool
 
 nonisolated(unsafe) var currentZipArchive: OpaquePointer? = nil
 
+@_silgen_name("set_current_zip_archive")
+func setCurrentZipArchive(_ archive: OpaquePointer?) -> Void
+
 // MARK: - cart slot state (main thread inserts/ejects, game thread owns it)
 
 nonisolated(unsafe) var slotMutex: OpaquePointer? = nil
@@ -121,6 +124,7 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
     }
 
     currentZipArchive = archive
+    setCurrentZipArchive(archive)
     print("DEBUG: zip cartridge loaded successfully")
     return (data, Int(size))
 }
@@ -178,7 +182,7 @@ enum Main {
                 if let i2 = inst { wasm_runtime_deinstantiate(i2) }
                 if let m2 = module { wasm_runtime_unload(m2) }
                 if let d2 = cartData { SDL_free(d2) }
-                if let z = currentZipArchive { zip_close(z); currentZipArchive = nil }
+                if let z = currentZipArchive { zip_close(z); currentZipArchive = nil; setCurrentZipArchive(nil) }
                 exec = nil; inst = nil; module = nil; cartData = nil; frameFn = nil
                 SDL_SetAtomicInt(&cartLoaded, 0)
                 Kit.shared.stopAllVoices()

@@ -15,7 +15,7 @@ if [ ! -f vendor/natives.c ]; then
 fi
 
 clang -c -Os -DNDEBUG -ffunction-sections \
-  -I vendor/wamr/core/iwasm/include -I "$KIT/Sources/KitABI/include" \
+  -I vendor/wamr/core/iwasm/include -I "$KIT/Sources/KitABI/include" -I "$KIT/Sources/CZip/include" \
   vendor/natives.c -o vendor/natives.o
 
 clang -c -Os -DNDEBUG -ffunction-sections \

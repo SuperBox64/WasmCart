@@ -60,10 +60,10 @@ static int wamr_snd_status(wasm_exec_env_t e, int voice) { return snd_status(voi
 static void wamr_snd_pause_all(wasm_exec_env_t e) { snd_pause_all(); }
 static void wamr_snd_resume_all(wasm_exec_env_t e) { snd_resume_all(); }
 static int wamr_gp_connected(wasm_exec_env_t e, int a0) { return gp_connected(a0); }
-static int stub_gp_button(wasm_exec_env_t e, int pad, int button) { return 0; }
-static float stub_gp_button_value(wasm_exec_env_t e, int pad, int button) { return 0; }
-static float stub_gp_axis(wasm_exec_env_t e, int pad, int axis) { return 0; }
-static void stub_gp_map_to_keys(wasm_exec_env_t e, int enable) {}
+static int wamr_gp_button(wasm_exec_env_t e, int pad, int button) { return gp_button(pad, button); }
+static float wamr_gp_button_value(wasm_exec_env_t e, int pad, int button) { return gp_button_value(pad, button); }
+static float wamr_gp_axis(wasm_exec_env_t e, int pad, int axis) { return gp_axis(pad, axis); }
+static void wamr_gp_map_to_keys(wasm_exec_env_t e, int enable) { gp_map_to_keys(enable); }
 static int wamr_tts_speak(wasm_exec_env_t e, const char* utf8, int len, float rate, float pitch, float volume) { return tts_speak(utf8, len, rate, pitch, volume); }
 static void wamr_tts_cancel(wasm_exec_env_t e) { tts_cancel(); }
 static void wamr_tts_set_preferred_voices(wasm_exec_env_t e, const char* csv, int len) { tts_set_preferred_voices(csv, len); }
@@ -115,10 +115,10 @@ static void wamr_store_set(wasm_exec_env_t e, const char* a0, int a1, const char
 static int wamr_asset_exists(wasm_exec_env_t e, const char* name, int len) { return asset_exists(name, len); }
 static int wamr_asset_text(wasm_exec_env_t e, const char* name, int len, char* buf, int cap) { return asset_text(name, len, buf, cap); }
 static int stub_img_polygon_from_alpha(wasm_exec_env_t e, int img, float alphaThreshold, float* out_xy, int cap) { return 0; }
-static int stub_key_pressed(wasm_exec_env_t e, int sfKey) { return 0; }
-static int stub_mouse_x(wasm_exec_env_t e) { return 0; }
-static int stub_mouse_y(wasm_exec_env_t e) { return 0; }
-static int stub_mouse_button(wasm_exec_env_t e, int b) { return 0; }
+static int wamr_key_pressed(wasm_exec_env_t e, int sfKey) { return key_pressed(sfKey); }
+static int wamr_mouse_x(wasm_exec_env_t e) { return mouse_x(); }
+static int wamr_mouse_y(wasm_exec_env_t e) { return mouse_y(); }
+static int wamr_mouse_button(wasm_exec_env_t e, int b) { return mouse_button(b); }
 static int wamr_evt_poll(wasm_exec_env_t e, int* a0, int* a1, int* a2, int* a3, int* a4) { return evt_poll(a0, a1, a2, a3, a4); }
 static int wamr_win_width(wasm_exec_env_t e) { return win_width(); }
 static int wamr_win_height(wasm_exec_env_t e) { return win_height(); }
@@ -161,10 +161,10 @@ NativeSymbol kit_natives[] = {
     { "snd_pause_all", (void *)wamr_snd_pause_all, "()", NULL },
     { "snd_resume_all", (void *)wamr_snd_resume_all, "()", NULL },
     { "gp_connected", (void *)wamr_gp_connected, "(i)i", NULL },
-    { "gp_button", (void *)stub_gp_button, "(ii)i", NULL },
-    { "gp_button_value", (void *)stub_gp_button_value, "(ii)f", NULL },
-    { "gp_axis", (void *)stub_gp_axis, "(ii)f", NULL },
-    { "gp_map_to_keys", (void *)stub_gp_map_to_keys, "(i)", NULL },
+    { "gp_button", (void *)wamr_gp_button, "(ii)i", NULL },
+    { "gp_button_value", (void *)wamr_gp_button_value, "(ii)f", NULL },
+    { "gp_axis", (void *)wamr_gp_axis, "(ii)f", NULL },
+    { "gp_map_to_keys", (void *)wamr_gp_map_to_keys, "(i)", NULL },
     { "tts_speak", (void *)wamr_tts_speak, "(*~fff)i", NULL },
     { "tts_cancel", (void *)wamr_tts_cancel, "()", NULL },
     { "tts_set_preferred_voices", (void *)wamr_tts_set_preferred_voices, "(*~)", NULL },
@@ -216,10 +216,10 @@ NativeSymbol kit_natives[] = {
     { "asset_exists", (void *)wamr_asset_exists, "(*~)i", NULL },
     { "asset_text", (void *)wamr_asset_text, "(*~*~)i", NULL },
     { "img_polygon_from_alpha", (void *)stub_img_polygon_from_alpha, "(if*~)i", NULL },
-    { "key_pressed", (void *)stub_key_pressed, "(i)i", NULL },
-    { "mouse_x", (void *)stub_mouse_x, "()i", NULL },
-    { "mouse_y", (void *)stub_mouse_y, "()i", NULL },
-    { "mouse_button", (void *)stub_mouse_button, "(i)i", NULL },
+    { "key_pressed", (void *)wamr_key_pressed, "(i)i", NULL },
+    { "mouse_x", (void *)wamr_mouse_x, "()i", NULL },
+    { "mouse_y", (void *)wamr_mouse_y, "()i", NULL },
+    { "mouse_button", (void *)wamr_mouse_button, "(i)i", NULL },
     { "evt_poll", (void *)wamr_evt_poll, "(*****)i", NULL },
     { "win_width", (void *)wamr_win_width, "()i", NULL },
     { "win_height", (void *)wamr_win_height, "()i", NULL },

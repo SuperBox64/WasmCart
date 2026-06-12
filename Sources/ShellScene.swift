@@ -14,8 +14,6 @@ final class ShellScene: SKScene {
     private var rowRects: [CGRect] = []
     private var dialogRect = CGRect.zero
     private var rescanCountdown = 0
-    private var lastClickTicks: UInt64 = 0
-    private var lastClickTarget = Int.min
 
     override func didMove(to view: SKView) {
         backgroundColor = .black
@@ -154,34 +152,23 @@ final class ShellScene: SKScene {
         }
     }
 
-    // single click selects, double click loads (rows and the OPEN FILE line)
+    // single click selects, a real OS double click loads (rows and OPEN FILE)
     override func mouseDown(with event: NSEvent) {
         let p = event.location(in: self)
-        let now = SDL_GetTicks()
-        let isDouble = now - lastClickTicks < 400
-        lastClickTicks = now
-
         for (i, rect) in rowRects.enumerated() where rect.contains(p) {
-            if isDouble, lastClickTarget == i {
-                lastClickTarget = Int.min
+            if event.clickCount >= 2, selected == i {
                 loadSelected()
             } else {
                 selected = i
                 buildUI()
-                lastClickTarget = i
             }
             return
         }
         if dialogRect.contains(p) || carts.isEmpty {
-            if isDouble, lastClickTarget == -1 {
-                lastClickTarget = Int.min
+            if event.clickCount >= 2 {
                 SDL_SetAtomicInt(&wantDialog, 1)
-            } else {
-                lastClickTarget = -1
             }
-            return
         }
-        lastClickTarget = Int.min
     }
 
     override func update(_ currentTime: TimeInterval) {

@@ -426,7 +426,9 @@ enum Main {
                         }
                         if elapsedMs >= st * 1000 {
                             if let surf = SDL_RenderReadPixels(Kit.shared.renderer, nil) {
-                                _ = "cart-selftest.bmp".withCString { SDL_SaveBMP(surf, $0) }
+                                let sRGB = SDL_ConvertSurfaceAndColorspace(surf, SDL_PIXELFORMAT_ARGB8888, nil, SDL_COLORSPACE_SRGB, 0)
+                                _ = "cart-selftest.bmp".withCString { SDL_SaveBMP(sRGB ?? surf, $0) }
+                                if let sRGB { SDL_DestroySurface(sRGB) }
                                 SDL_DestroySurface(surf)
                             }
                             print("selftest: \(frames) frames in cart -> cart-selftest.bmp")

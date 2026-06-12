@@ -51,6 +51,9 @@ final class Host {
     var audioDevice: UInt32 = 0
     var voiceStreams: [OpaquePointer] = []
     var voiceLoops: [Int32] = []
+    var voiceIds: [Int32] = []
+    var voicePans: [Float] = []
+    var nextVoice: Int32 = 1
     var storeKeys: [String] = []
     var storeVals: [String] = []
     var assetDir = ""
@@ -176,16 +179,17 @@ final class Host {
 
     // One real device; every voice is a stream bound to it and the device
     // mixes. Finished voices are reaped each frame; loops refill on drain.
-    func play(_ id: Int32, volume: Float, loop: Bool) {
+    @discardableResult
+    func play(_ id: Int32, volume: Float, loop: Bool) -> Int32 {
         let i = Int(id)
-        guard i > 0, i < soundBufs.count, let buf = soundBufs[i] else { return }
+        guard i > 0, i < soundBufs.count, let buf = soundBufs[i] else { return -1 }
         if audioDevice == 0 {
             audioDevice = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nil)
-            guard audioDevice != 0 else { return }
+            guard audioDevice != 0 else { return -1 }
             _ = SDL_ResumeAudioDevice(audioDevice)
         }
         var spec = soundSpecs[i]
-        guard let stream = SDL_CreateAudioStream(&spec, nil) else { return }
+        guard let stream = SDL_CreateAudioStream(&spec, nil) else { return -1 }
         // the ABI carries volume as 0-100 (the web runtime divides the same way)
         _ = SDL_SetAudioStreamGain(stream, max(0, min(1, volume / 100)))
         // bind BEFORE queueing: binding re-targets the stream's output format
@@ -194,8 +198,39 @@ final class Host {
         _ = SDL_BindAudioStream(audioDevice, stream)
         _ = SDL_PutAudioStreamData(stream, buf, Int32(soundLens[i]))
         if !loop { _ = SDL_FlushAudioStream(stream) }
+        let voice = nextVoice
+        nextVoice += 1
         voiceStreams.append(stream)
         voiceLoops.append(loop ? id : 0)
+        voiceIds.append(voice)
+        voicePans.append(0)
+        return voice
+    }
+
+    func stopVoice(_ voice: Int32) {
+        for i in 0..<voiceIds.count where voiceIds[i] == voice {
+            SDL_UnbindAudioStream(voiceStreams[i])
+            SDL_DestroyAudioStream(voiceStreams[i])
+            voiceStreams.remove(at: i)
+            voiceLoops.remove(at: i)
+            voiceIds.remove(at: i)
+            voicePans.remove(at: i)
+            return
+        }
+    }
+
+    func setVoiceVolume(_ voice: Int32, _ volume: Float) {
+        for i in 0..<voiceIds.count where voiceIds[i] == voice {
+            _ = SDL_SetAudioStreamGain(voiceStreams[i], max(0, min(1, volume / 100)))
+            return
+        }
+    }
+
+    func setVoicePan(_ voice: Int32, _ pan: Float) {
+        for i in 0..<voiceIds.count where voiceIds[i] == voice {
+            voicePans[i] = max(-1, min(1, pan))
+            return
+        }
     }
 
     func reapVoices() {
@@ -215,6 +250,8 @@ final class Host {
                 SDL_DestroyAudioStream(stream)
                 voiceStreams.remove(at: i)
                 voiceLoops.remove(at: i)
+                voiceIds.remove(at: i)
+                voicePans.remove(at: i)
             } else {
                 i += 1
             }
@@ -307,6 +344,7 @@ let fnNames = [
     "gfx_scale", "gfx_set_alpha", "gfx_stroke_poly", "gfx_fill_poly",
     "gfx_fill_circle", "gfx_stroke_circle", "gfx_fill_rect", "gfx_stroke_rect",
     "evt_poll", "snd_by_name", "snd_play", "store_get", "store_set",
+    "snd_stop", "snd_set_volume", "snd_set_pan",
 ]
 
 func fval(_ args: UnsafePointer<wasmtime_val_t>?, _ i: Int) -> Float {
@@ -396,8 +434,7 @@ let trampoline: wasmtime_func_callback_t = { env, _, args, nargs, results, nresu
         }
     case 14: ret = host.loadSound(host.str(ival(args, 0), ival(args, 1)))
     case 15:
-        host.play(ival(args, 0), volume: fval(args, 1), loop: ival(args, 2) != 0)
-        ret = ival(args, 0)
+        ret = host.play(ival(args, 0), volume: fval(args, 1), loop: ival(args, 2) != 0)
     case 16: // store_get
         if let v = host.storeGet(host.str(ival(args, 0), ival(args, 1))) {
             let bytes = Array(v.utf8)
@@ -409,6 +446,9 @@ let trampoline: wasmtime_func_callback_t = { env, _, args, nargs, results, nresu
             ret = -1
         }
     case 17: host.storeSet(host.str(ival(args, 0), ival(args, 1)), host.str(ival(args, 2), ival(args, 3)))
+    case 18: host.stopVoice(ival(args, 0))
+    case 19: host.setVoiceVolume(ival(args, 0), fval(args, 1))
+    case 20: host.setVoicePan(ival(args, 0), fval(args, 1))
     default:
         break
     }

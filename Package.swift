@@ -16,6 +16,7 @@ let package = Package(
                 .product(name: "SpriteKit", package: "SuperBox64Kit"),
                 .product(name: "CSDL3", package: "SuperBox64Kit"),
                 .product(name: "CWamr", package: "SuperBox64Kit"),
+                .product(name: "CZip", package: "SuperBox64Kit"),
                 .product(name: "KitABI", package: "SuperBox64Kit"),
             ],
             swiftSettings: [

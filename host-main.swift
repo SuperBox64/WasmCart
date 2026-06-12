@@ -9,9 +9,12 @@
 import SpriteKit
 import CSDL3
 import CWamr
+import CZip
 
 @_silgen_name("kit_register_natives")
 func kitRegisterNatives() -> Bool
+
+nonisolated(unsafe) var currentZipArchive: OpaquePointer? = nil
 
 // MARK: - cart slot state (main thread inserts/ejects, game thread owns it)
 
@@ -49,6 +52,47 @@ func openCartDialog() {
 }
 
 nonisolated(unsafe) var wantDialog = SDL_AtomicInt(value: 0)
+
+// MARK: - zip loading
+
+func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size: Int)? {
+    guard let archive = zip_open(zipPath) else {
+        print("failed to open zip: \(zipPath)")
+        return nil
+    }
+
+    if zip_locate_file(archive, "asteroidz-embedded.wasm") < 0 {
+        zip_close(archive)
+        print("wasm file not found in zip")
+        return nil
+    }
+
+    guard let file = zip_fopen(archive, "asteroidz-embedded.wasm") else {
+        zip_close(archive)
+        print("failed to open wasm in zip")
+        return nil
+    }
+
+    let size = Int(zip_get_current_file_info_size(archive))
+    guard let data = malloc(size) else {
+        zip_fclose(file)
+        zip_close(archive)
+        return nil
+    }
+
+    let read = zip_fread(data, size, file)
+    zip_fclose(file)
+
+    if read != size {
+        free(data)
+        zip_close(archive)
+        print("failed to read wasm from zip")
+        return nil
+    }
+
+    currentZipArchive = archive
+    return (data, size)
+}
 
 // MARK: - main
 
@@ -103,6 +147,7 @@ enum Main {
                 if let i2 = inst { wasm_runtime_deinstantiate(i2) }
                 if let m2 = module { wasm_runtime_unload(m2) }
                 if let d2 = cartData { SDL_free(d2) }
+                if let z = currentZipArchive { zip_close(z); currentZipArchive = nil }
                 exec = nil; inst = nil; module = nil; cartData = nil; frameFn = nil
                 SDL_SetAtomicInt(&cartLoaded, 0)
                 Kit.shared.stopAllVoices()
@@ -111,10 +156,25 @@ enum Main {
 
             func loadCart(_ path: String) {
                 ejectCart()
-                var size = 0
-                guard let data = path.withCString({ SDL_LoadFile($0, &size) }) else {
-                    print("cart not found: " + path)
-                    return
+
+                var data: UnsafeMutableRawPointer?
+                var size: Int
+
+                if path.hasSuffix(".zip") {
+                    guard let result = loadWasmFromZip(path) else {
+                        print("failed to load wasm from zip: " + path)
+                        return
+                    }
+                    data = result.data
+                    size = result.size
+                } else {
+                    var rawSize = 0
+                    guard let rawData = path.withCString({ SDL_LoadFile($0, &rawSize) }) else {
+                        print("cart not found: " + path)
+                        return
+                    }
+                    data = rawData
+                    size = rawSize
                 }
                 var errBuf = [CChar](repeating: 0, count: 128)
                 let m = errBuf.withUnsafeMutableBufferPointer { eb in

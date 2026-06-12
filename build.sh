@@ -9,7 +9,11 @@ cd "$(dirname "$0")"
 KIT="${KIT:-$(cd ../SuperBox64Kit && pwd)}"
 OUT_NAME="${HOST_NAME:-WasmCart}"
 
-python3 gen-natives.py "$KIT/Sources/KitABI/include/KitABI.h" vendor/natives.c
+if [ ! -f vendor/natives.c ]; then
+  echo "ERROR: vendor/natives.c not found. Generate it with: python3 gen-natives.py"
+  exit 1
+fi
+
 clang -c -Os -DNDEBUG -ffunction-sections \
   -I vendor/wamr/core/iwasm/include -I "$KIT/Sources/KitABI/include" \
   vendor/natives.c -o vendor/natives.o

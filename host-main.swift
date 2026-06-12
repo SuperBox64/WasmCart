@@ -39,16 +39,20 @@ func takePendingCart() -> String? {
 }
 
 func openCartDialog() {
-    "cartridge (wasm or zip)".withCString { desc in
-        "*.wasm,*.zip".withCString { pat in
-            var filter = SDL_DialogFileFilter(name: desc, pattern: pat)
-            SDL_ShowOpenFileDialog({ _, files, _ in
-                if let files, let first = files.pointee {
-                    insertCart(String(cString: first))
-                }
-            }, nil, Kit.shared.window, &filter, 1, nil, false)
+    print("DEBUG: openCartDialog called")
+    print("DEBUG: calling SDL_ShowOpenFileDialog with no filters")
+    SDL_ShowOpenFileDialog({ _, files, _ in
+        print("DEBUG: dialog callback called, files=\(files != nil ? "yes" : "nil")")
+        if let files {
+            var filePtr = files
+            while let file = filePtr.pointee {
+                print("DEBUG: selected file: \(String(cString: file))")
+                insertCart(String(cString: file))
+                filePtr += 1
+            }
         }
-    }
+    }, nil, Kit.shared.window, nil, 0, nil, false)
+    print("DEBUG: SDL_ShowOpenFileDialog returned")
 }
 
 nonisolated(unsafe) var wantDialog = SDL_AtomicInt(value: 0)
@@ -56,21 +60,26 @@ nonisolated(unsafe) var wantDialog = SDL_AtomicInt(value: 0)
 // MARK: - zip loading
 
 func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size: Int)? {
+    print("DEBUG: opening zip: \(zipPath)")
     guard let archive = zip_open(zipPath) else {
-        print("failed to open zip: \(zipPath)")
+        print("ERROR: failed to open zip: \(zipPath)")
         return nil
     }
+    print("DEBUG: zip opened")
 
     var wasmFile: String? = nil
     let numFiles = zip_get_num_files(archive)
+    print("DEBUG: found \(numFiles) files in zip")
     var nameBuf = [CChar](repeating: 0, count: 256)
 
     for i in 0..<numFiles {
         var size: size_t = 0
         if zip_get_file_info(archive, UInt32(i), &nameBuf, nameBuf.count, &size) == 0 {
             let name = String(cString: nameBuf)
-            if name.hasSuffix(".wasm") && !name.contains("/") {
+            print("DEBUG: file \(i): \(name) (\(size) bytes)")
+            if name.hasSuffix(".wasm") {
                 wasmFile = name
+                print("DEBUG: found wasm file: \(name)")
                 break
             }
         }
@@ -78,37 +87,41 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
 
     guard let wasmFileName = wasmFile else {
         zip_close(archive)
-        print("no .wasm file found in zip root")
+        print("ERROR: no .wasm file found in zip")
         return nil
     }
 
+    print("DEBUG: opening \(wasmFileName)")
     guard let file = zip_fopen(archive, wasmFileName) else {
         zip_close(archive)
-        print("failed to open \(wasmFileName) in zip")
+        print("ERROR: failed to open \(wasmFileName) in zip")
         return nil
     }
+    print("DEBUG: file opened")
 
-    var size: size_t = 0
-    _ = zip_locate_file(archive, wasmFileName)
-    size = zip_get_current_file_info_size(archive)
+    let size = zip_fget_size(file)
+    print("DEBUG: file size: \(size)")
 
     guard let data = SDL_malloc(size) else {
         zip_fclose(file)
         zip_close(archive)
+        print("ERROR: malloc failed for \(size) bytes")
         return nil
     }
 
     let read = zip_fread(data, size, file)
+    print("DEBUG: read \(read) bytes")
     zip_fclose(file)
 
     if read != size {
         free(data)
         zip_close(archive)
-        print("failed to read \(wasmFileName) from zip")
+        print("ERROR: read mismatch: expected \(size), got \(read)")
         return nil
     }
 
     currentZipArchive = archive
+    print("DEBUG: zip cartridge loaded successfully")
     return (data, Int(size))
 }
 
@@ -209,16 +222,10 @@ enum Main {
                     wasm_runtime_deinstantiate(i); wasm_runtime_unload(m); SDL_free(data); return
                 }
 
-                // assets and the per-cart store live beside / are named by the cart
-                var dir = path
                 var base = path
-                if let slash = dir.utf8.lastIndex(of: 47) {
-                    dir = String(dir[..<slash])
+                if let slash = path.utf8.lastIndex(of: 47) {
                     base = String(path[path.index(after: slash)...])
-                } else {
-                    dir = "."
                 }
-                Kit.shared.assetDir = dir + "/assets/sfx"
                 if let pref = ("SuperBox64".withCString { org in "WasmCart".withCString { SDL_GetPrefPath(org, $0) } }) {
                     Kit.shared.storePath = String(cString: pref) + base + ".store.tsv"
                     SDL_free(UnsafeMutableRawPointer(mutating: pref))
@@ -316,6 +323,7 @@ enum Main {
                 }
             }
             if SDL_GetAtomicInt(&wantDialog) == 1 {
+                print("DEBUG: processing wantDialog")
                 SDL_SetAtomicInt(&wantDialog, 0)
                 openCartDialog()
             }

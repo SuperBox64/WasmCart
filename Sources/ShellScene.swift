@@ -43,6 +43,7 @@ final class ShellScene: SKScene {
     }
 
     override func mouseDown(with event: NSEvent) {
+        print("DEBUG: shellscene click detected")
         SDL_SetAtomicInt(&wantDialog, 1)
     }
 

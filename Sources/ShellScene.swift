@@ -78,19 +78,18 @@ final class ShellScene: SKScene {
     private func buildUI() {
         lines.removeAllChildren()
         rowRects = []
-        vectorText("WASMCART", at: CGPoint(x: size.width / 2, y: size.height * 0.84), scale: 3.4, alpha: 0.85)
 
-        // the slot
-        let slotY = size.height * 0.68
-        let slot = SKShapeNode(rect: CGRect(x: size.width / 2 - 240, y: slotY, width: 480, height: 70))
+        // the slot, wearing the console's name as its cartridge label
+        let slotY = size.height * 0.72
+        let slot = SKShapeNode(rect: CGRect(x: size.width / 2 - 280, y: slotY, width: 560, height: 100))
         slot.strokeColor = SKColor(white: 1, alpha: 0.6)
         slot.lineWidth = 2
         slot.name = "slot"
         lines.addChild(slot)
         let slotLabel = ShellFont.draw("WASMCART")
-        slotLabel.position = CGPoint(x: size.width / 2, y: slotY + 35)
-        slotLabel.setScale(1.6)
-        slotLabel.alpha = 0.45
+        slotLabel.position = CGPoint(x: size.width / 2, y: slotY + 50)
+        slotLabel.setScale(3.4)
+        slotLabel.alpha = 0.625
         slotLabel.name = "slotlabel"
         lines.addChild(slotLabel)
 
@@ -179,7 +178,7 @@ final class ShellScene: SKScene {
         for child in lines.children where child.name == "slot" {
             (child as? SKShapeNode)?.strokeColor = SKColor(white: 1, alpha: glow)
         }
-        let throb = 0.45 + 0.25 * CGFloat(SDL_sinf(Float(pulse)))
+        let throb = 0.625 + 0.225 * CGFloat(SDL_sinf(Float(pulse)))
         for child in lines.children where child.name == "slotlabel" {
             child.alpha = throb
         }

@@ -39,8 +39,8 @@ func takePendingCart() -> String? {
 }
 
 func openCartDialog() {
-    "wasm cartridge".withCString { desc in
-        "wasm".withCString { pat in
+    "cartridge (wasm or zip)".withCString { desc in
+        "*.wasm,*.zip".withCString { pat in
             var filter = SDL_DialogFileFilter(name: desc, pattern: pat)
             SDL_ShowOpenFileDialog({ _, files, _ in
                 if let files, let first = files.pointee {

@@ -59,6 +59,7 @@ func openCartDialog() {
 }
 
 nonisolated(unsafe) var wantDialog = SDL_AtomicInt(value: 0)
+nonisolated(unsafe) var currentFPS = SDL_AtomicInt(value: 0)
 
 // MARK: - zip loading
 
@@ -309,6 +310,10 @@ enum Main {
                 SDL_SetAtomicInt(&cartLoaded, 1)
             }
 
+            var vsyncOn: Int32 = 0
+            _ = SDL_GetRenderVSync(Kit.shared.renderer, &vsyncOn)
+            var fpsFrames = 0
+            var fpsStart = SDL_GetTicksNS()
             var last = SDL_GetTicksNS()
             while SDL_GetAtomicInt(&runFlag) == 1 {
                 if let path = takePendingCart() { loadCart(path) }
@@ -355,8 +360,23 @@ enum Main {
                 }
                 kitHostPresent()
 
+                fpsFrames += 1
+                let fnow = SDL_GetTicksNS()
+                if fnow - fpsStart >= 1_000_000_000 {
+                    let fps = (UInt64(fpsFrames) * 1_000_000_000 + (fnow - fpsStart) / 2) / (fnow - fpsStart)
+                    SDL_SetAtomicInt(&currentFPS, Int32(fps))
+                    fpsFrames = 0
+                    fpsStart = fnow
+                }
+
+                // vsync paces the loop by blocking in present; sleeping the
+                // remainder on top of that beats against the vblank and drops
+                // frames (~52 fps). The sleep stays as the cap for vsync-off
+                // renderers and occluded windows where present returns at once.
                 let used = SDL_GetTicksNS() - now
-                if used < 16_666_666 { SDL_DelayNS(16_666_666 - used) }
+                if vsyncOn == 0 || used < 4_000_000 {
+                    if used < 16_666_666 { SDL_DelayNS(16_666_666 - used) }
+                }
             }
             ejectCart()
             wasm_runtime_destroy_thread_env()
@@ -364,7 +384,13 @@ enum Main {
         }, "game", UnsafeMutableRawPointer(ctxBox), nil, nil)
 
         // main thread: the OS event pump plus console controls
+        var shownFPS: Int32 = -1
         while SDL_GetAtomicInt(&runFlag) == 1 {
+            let fps = SDL_GetAtomicInt(&currentFPS)
+            if fps != shownFPS {
+                shownFPS = fps
+                _ = "WasmCart - \(fps) FPS".withCString { SDL_SetWindowTitle(Kit.shared.window, $0) }
+            }
             if !kitHostPump() {
                 SDL_SetAtomicInt(&runFlag, 0)
                 break

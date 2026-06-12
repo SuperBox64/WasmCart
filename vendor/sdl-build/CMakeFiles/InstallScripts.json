@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/toddbruss/Documents/GitHub/WasmCart/vendor/sdl-build/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/toddbruss/Documents/GitHub/WasmCart/vendor/wamr-build/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

@@ -14,6 +14,8 @@ final class ShellScene: SKScene {
     private var rowRects: [CGRect] = []
     private var dialogRect = CGRect.zero
     private var rescanCountdown = 0
+    private var lastClickTicks: UInt64 = 0
+    private var lastClickTarget = Int.min
 
     override func didMove(to view: SKView) {
         backgroundColor = .black
@@ -120,7 +122,7 @@ final class ShellScene: SKScene {
         vectorText("OPEN FILE", at: CGPoint(x: size.width / 2, y: y), scale: 1.0, alpha: 0.65)
         dialogRect = CGRect(x: size.width / 2 - 240, y: y - rowH / 2, width: 480, height: rowH)
 
-        vectorText("ARROWS SELECT  ENTER LOADS  DROP A WASM ANYTIME", at: CGPoint(x: size.width / 2, y: size.height * 0.10), scale: 0.9, alpha: 0.5)
+        vectorText("ARROWS SELECT  ENTER OR DOUBLE CLICK LOADS  DROP A WASM ANYTIME", at: CGPoint(x: size.width / 2, y: size.height * 0.10), scale: 0.9, alpha: 0.5)
         vectorText("CTRL ESC EJECTS", at: CGPoint(x: size.width / 2, y: size.height * 0.06), scale: 0.9, alpha: 0.5)
     }
 
@@ -152,15 +154,34 @@ final class ShellScene: SKScene {
         }
     }
 
+    // single click selects, double click loads (rows and the OPEN FILE line)
     override func mouseDown(with event: NSEvent) {
         let p = event.location(in: self)
+        let now = SDL_GetTicks()
+        let isDouble = now - lastClickTicks < 400
+        lastClickTicks = now
+
         for (i, rect) in rowRects.enumerated() where rect.contains(p) {
-            selected = i
-            buildUI()
-            loadSelected()
+            if isDouble, lastClickTarget == i {
+                lastClickTarget = Int.min
+                loadSelected()
+            } else {
+                selected = i
+                buildUI()
+                lastClickTarget = i
+            }
             return
         }
-        SDL_SetAtomicInt(&wantDialog, 1)
+        if dialogRect.contains(p) || carts.isEmpty {
+            if isDouble, lastClickTarget == -1 {
+                lastClickTarget = Int.min
+                SDL_SetAtomicInt(&wantDialog, 1)
+            } else {
+                lastClickTarget = -1
+            }
+            return
+        }
+        lastClickTarget = Int.min
     }
 
     override func update(_ currentTime: TimeInterval) {

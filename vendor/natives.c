@@ -64,11 +64,11 @@ static int stub_gp_button(wasm_exec_env_t e, int pad, int button) { return 0; }
 static float stub_gp_button_value(wasm_exec_env_t e, int pad, int button) { return 0; }
 static float stub_gp_axis(wasm_exec_env_t e, int pad, int axis) { return 0; }
 static void stub_gp_map_to_keys(wasm_exec_env_t e, int enable) {}
-static int stub_tts_speak(wasm_exec_env_t e, const char* utf8, int len, float rate, float pitch, float volume) { return 0; }
-static void stub_tts_cancel(wasm_exec_env_t e) {}
-static void stub_tts_set_preferred_voices(wasm_exec_env_t e, const char* csv, int len) {}
-static void stub_tts_set_robotic_voices(wasm_exec_env_t e, const char* csv, int len) {}
-static void stub_tts_set_female_voices(wasm_exec_env_t e, const char* csv, int len) {}
+static int wamr_tts_speak(wasm_exec_env_t e, const char* utf8, int len, float rate, float pitch, float volume) { return tts_speak(utf8, len, rate, pitch, volume); }
+static void wamr_tts_cancel(wasm_exec_env_t e) { tts_cancel(); }
+static void wamr_tts_set_preferred_voices(wasm_exec_env_t e, const char* csv, int len) { tts_set_preferred_voices(csv, len); }
+static void wamr_tts_set_robotic_voices(wasm_exec_env_t e, const char* csv, int len) { tts_set_robotic_voices(csv, len); }
+static void wamr_tts_set_female_voices(wasm_exec_env_t e, const char* csv, int len) { tts_set_female_voices(csv, len); }
 static int wamr_gfx_offscreen_begin(wasm_exec_env_t e, int w, int h) { return gfx_offscreen_begin(w, h); }
 static int wamr_gfx_offscreen_end_to_image(wasm_exec_env_t e, int handle) { return gfx_offscreen_end_to_image(handle); }
 static void wamr_gfx_offscreen_end_discard(wasm_exec_env_t e, int handle) { gfx_offscreen_end_discard(handle); }
@@ -165,11 +165,11 @@ NativeSymbol kit_natives[] = {
     { "gp_button_value", (void *)stub_gp_button_value, "(ii)f", NULL },
     { "gp_axis", (void *)stub_gp_axis, "(ii)f", NULL },
     { "gp_map_to_keys", (void *)stub_gp_map_to_keys, "(i)", NULL },
-    { "tts_speak", (void *)stub_tts_speak, "(*~fff)i", NULL },
-    { "tts_cancel", (void *)stub_tts_cancel, "()", NULL },
-    { "tts_set_preferred_voices", (void *)stub_tts_set_preferred_voices, "(*~)", NULL },
-    { "tts_set_robotic_voices", (void *)stub_tts_set_robotic_voices, "(*~)", NULL },
-    { "tts_set_female_voices", (void *)stub_tts_set_female_voices, "(*~)", NULL },
+    { "tts_speak", (void *)wamr_tts_speak, "(*~fff)i", NULL },
+    { "tts_cancel", (void *)wamr_tts_cancel, "()", NULL },
+    { "tts_set_preferred_voices", (void *)wamr_tts_set_preferred_voices, "(*~)", NULL },
+    { "tts_set_robotic_voices", (void *)wamr_tts_set_robotic_voices, "(*~)", NULL },
+    { "tts_set_female_voices", (void *)wamr_tts_set_female_voices, "(*~)", NULL },
     { "gfx_offscreen_begin", (void *)wamr_gfx_offscreen_begin, "(ii)i", NULL },
     { "gfx_offscreen_end_to_image", (void *)wamr_gfx_offscreen_end_to_image, "(i)i", NULL },
     { "gfx_offscreen_end_discard", (void *)wamr_gfx_offscreen_end_discard, "(i)", NULL },

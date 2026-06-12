@@ -87,10 +87,12 @@ final class ShellScene: SKScene {
         slot.lineWidth = 2
         slot.name = "slot"
         lines.addChild(slot)
-        let notch = SKShapeNode(rect: CGRect(x: size.width / 2 - 80, y: slotY + 24, width: 160, height: 22))
-        notch.fillColor = SKColor(white: 1, alpha: 0.25)
-        notch.strokeColor = .clear
-        lines.addChild(notch)
+        let slotLabel = ShellFont.draw("WASMCART")
+        slotLabel.position = CGPoint(x: size.width / 2, y: slotY + 35)
+        slotLabel.setScale(1.6)
+        slotLabel.alpha = 0.45
+        slotLabel.name = "slotlabel"
+        lines.addChild(slotLabel)
 
         let rowH = size.height * 0.045
         var y = size.height * 0.58
@@ -176,6 +178,10 @@ final class ShellScene: SKScene {
         let glow = 0.45 + 0.25 * abs(CGFloat(SDL_sinf(Float(pulse))))
         for child in lines.children where child.name == "slot" {
             (child as? SKShapeNode)?.strokeColor = SKColor(white: 1, alpha: glow)
+        }
+        let throb = 0.45 + 0.25 * CGFloat(SDL_sinf(Float(pulse)))
+        for child in lines.children where child.name == "slotlabel" {
+            child.alpha = throb
         }
         rescanCountdown -= 1
         if rescanCountdown <= 0 {

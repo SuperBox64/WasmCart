@@ -230,14 +230,23 @@ enum Main {
         kitEscapeReserved = true
         kitHostInit(appName: "WasmCart")
 
-        // the console's system emoji font (Noto Color Emoji ships next to the
-        // binary); games fall back to it for codepoints their fonts lack
+        // games fall back to the platform's color emoji for codepoints their
+        // fonts lack: Apple Color Emoji (sbix) on macOS, the installed Noto
+        // (CBDT) on Linux, or any NotoColorEmoji.ttf dropped next to the binary
+        var emojiPaths = [
+            "/System/Library/Fonts/Apple Color Emoji.ttc",
+            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+        ]
         if let base = SDL_GetBasePath() {
-            let path = String(cString: base) + "NotoColorEmoji.ttf"
+            emojiPaths.append(String(cString: base) + "NotoColorEmoji.ttf")
+        }
+        for path in emojiPaths {
             var size = 0
-            if let data = path.withCString({ SDL_LoadFile($0, &size) }), size > 0 {
-                Kit.shared.setEmojiFont(UnsafeRawPointer(data).bindMemory(to: UInt8.self, capacity: size), size)
-            }
+            guard let data = path.withCString({ SDL_LoadFile($0, &size) }), size > 0 else { continue }
+            Kit.shared.setEmojiFont(UnsafeRawPointer(data).bindMemory(to: UInt8.self, capacity: size), size)
+            if Kit.shared.emojiFont != nil { break }
+            SDL_free(data)
         }
 
         guard wasm_runtime_init() else { fatalError("wamr init failed") }

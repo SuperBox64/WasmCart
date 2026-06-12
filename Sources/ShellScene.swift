@@ -270,7 +270,7 @@ enum ShellFont {
                 }
                 let glyph = SKShapeNode(path: path)
                 glyph.strokeColor = .white
-                glyph.lineWidth = 1.2
+                glyph.lineWidth = 2
                 glyph.position = CGPoint(x: x, y: -7)
                 node.addChild(glyph)
             }

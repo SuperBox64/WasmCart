@@ -1,5 +1,7 @@
 /WasmCart
 /WasmUp
+.build/
+.swiftpm/
 native-selftest.bmp
 .native-store.tsv
 *.zip

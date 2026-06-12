@@ -98,15 +98,15 @@ static void wamr_eng_player_play(wasm_exec_env_t e, int id) { eng_player_play(id
 static void wamr_eng_player_stop(wasm_exec_env_t e, int id) { eng_player_stop(id); }
 static void wamr_eng_start(wasm_exec_env_t e) { eng_start(); }
 static void wamr_eng_stop(wasm_exec_env_t e) { eng_stop(); }
-static int stub_gfx_shader_compile(wasm_exec_env_t e, const char* src, int len) { return 0; }
-static void stub_gfx_shader_release(wasm_exec_env_t e, int shader) {}
-static void stub_gfx_shader_set_uniform_f(wasm_exec_env_t e, int shader, const char* name, int nlen, float v) {}
-static void stub_gfx_shader_set_uniform_v2(wasm_exec_env_t e, int shader, const char* name, int nlen, float x, float y) {}
-static void stub_gfx_shader_set_uniform_v3(wasm_exec_env_t e, int shader, const char* name, int nlen, float x, float y, float z) {}
-static void stub_gfx_shader_set_uniform_v4(wasm_exec_env_t e, int shader, const char* name, int nlen, float x, float y, float z, float w) {}
-static void stub_gfx_shader_set_uniform_t(wasm_exec_env_t e, int shader, const char* name, int nlen, int img) {}
-static void stub_gfx_shader_draw(wasm_exec_env_t e, int shader, int srcImg, float dstX, float dstY, float dstW, float dstH, float time, uint32_t colorRgba) {}
-static void stub_gfx_lighting_draw(wasm_exec_env_t e, int srcImg, int normalImg, const float* lights, int lightCount, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) {}
+static int wamr_gfx_shader_compile(wasm_exec_env_t e, const char* src, int len) { return gfx_shader_compile(src, len); }
+static void wamr_gfx_shader_release(wasm_exec_env_t e, int shader) { gfx_shader_release(shader); }
+static void wamr_gfx_shader_set_uniform_f(wasm_exec_env_t e, int shader, const char* name, int nlen, float v) { gfx_shader_set_uniform_f(shader, name, nlen, v); }
+static void wamr_gfx_shader_set_uniform_v2(wasm_exec_env_t e, int shader, const char* name, int nlen, float x, float y) { gfx_shader_set_uniform_v2(shader, name, nlen, x, y); }
+static void wamr_gfx_shader_set_uniform_v3(wasm_exec_env_t e, int shader, const char* name, int nlen, float x, float y, float z) { gfx_shader_set_uniform_v3(shader, name, nlen, x, y, z); }
+static void wamr_gfx_shader_set_uniform_v4(wasm_exec_env_t e, int shader, const char* name, int nlen, float x, float y, float z, float w) { gfx_shader_set_uniform_v4(shader, name, nlen, x, y, z, w); }
+static void wamr_gfx_shader_set_uniform_t(wasm_exec_env_t e, int shader, const char* name, int nlen, int img) { gfx_shader_set_uniform_t(shader, name, nlen, img); }
+static void wamr_gfx_shader_draw(wasm_exec_env_t e, int shader, int srcImg, float dstX, float dstY, float dstW, float dstH, float time, uint32_t colorRgba) { gfx_shader_draw(shader, srcImg, dstX, dstY, dstW, dstH, time, colorRgba); }
+static void wamr_gfx_lighting_draw(wasm_exec_env_t e, int srcImg, int normalImg, const float* lights, int lightCount, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) { gfx_lighting_draw(srcImg, normalImg, lights, lightCount, dstX, dstY, dstW, dstH, colorRgba); }
 static void wamr_gfx_warp_draw(wasm_exec_env_t e, int srcImg, int cols, int rows, const float* srcUV, const float* dstXY, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) { gfx_warp_draw(srcImg, cols, rows, srcUV, dstXY, dstX, dstY, dstW, dstH, colorRgba); }
 static void wamr_gfx_3d_draw_billboard(wasm_exec_env_t e, int srcImg, float camX, float camY, float camZ, float dstX, float dstY, float dstW, float dstH, uint32_t colorRgba) { gfx_3d_draw_billboard(srcImg, camX, camY, camZ, dstX, dstY, dstW, dstH, colorRgba); }
 static int wamr_gfx_upload_pixels(wasm_exec_env_t e, int img, int w, int h, const uint8_t* rgba, int len) { return gfx_upload_pixels(img, w, h, rgba, len); }
@@ -199,15 +199,15 @@ NativeSymbol kit_natives[] = {
     { "eng_player_stop", (void *)wamr_eng_player_stop, "(i)", NULL },
     { "eng_start", (void *)wamr_eng_start, "()", NULL },
     { "eng_stop", (void *)wamr_eng_stop, "()", NULL },
-    { "gfx_shader_compile", (void *)stub_gfx_shader_compile, "(*~)i", NULL },
-    { "gfx_shader_release", (void *)stub_gfx_shader_release, "(i)", NULL },
-    { "gfx_shader_set_uniform_f", (void *)stub_gfx_shader_set_uniform_f, "(i*~f)", NULL },
-    { "gfx_shader_set_uniform_v2", (void *)stub_gfx_shader_set_uniform_v2, "(i*~ff)", NULL },
-    { "gfx_shader_set_uniform_v3", (void *)stub_gfx_shader_set_uniform_v3, "(i*~fff)", NULL },
-    { "gfx_shader_set_uniform_v4", (void *)stub_gfx_shader_set_uniform_v4, "(i*~ffff)", NULL },
-    { "gfx_shader_set_uniform_t", (void *)stub_gfx_shader_set_uniform_t, "(i*~i)", NULL },
-    { "gfx_shader_draw", (void *)stub_gfx_shader_draw, "(iifffffi)", NULL },
-    { "gfx_lighting_draw", (void *)stub_gfx_lighting_draw, "(ii*~ffffi)", NULL },
+    { "gfx_shader_compile", (void *)wamr_gfx_shader_compile, "(*~)i", NULL },
+    { "gfx_shader_release", (void *)wamr_gfx_shader_release, "(i)", NULL },
+    { "gfx_shader_set_uniform_f", (void *)wamr_gfx_shader_set_uniform_f, "(i*~f)", NULL },
+    { "gfx_shader_set_uniform_v2", (void *)wamr_gfx_shader_set_uniform_v2, "(i*~ff)", NULL },
+    { "gfx_shader_set_uniform_v3", (void *)wamr_gfx_shader_set_uniform_v3, "(i*~fff)", NULL },
+    { "gfx_shader_set_uniform_v4", (void *)wamr_gfx_shader_set_uniform_v4, "(i*~ffff)", NULL },
+    { "gfx_shader_set_uniform_t", (void *)wamr_gfx_shader_set_uniform_t, "(i*~i)", NULL },
+    { "gfx_shader_draw", (void *)wamr_gfx_shader_draw, "(iifffffi)", NULL },
+    { "gfx_lighting_draw", (void *)wamr_gfx_lighting_draw, "(ii*~ffffi)", NULL },
     { "gfx_warp_draw", (void *)wamr_gfx_warp_draw, "(iii**ffffi)", NULL },
     { "gfx_3d_draw_billboard", (void *)wamr_gfx_3d_draw_billboard, "(ifffffffi)", NULL },
     { "gfx_upload_pixels", (void *)wamr_gfx_upload_pixels, "(iii*~)i", NULL },

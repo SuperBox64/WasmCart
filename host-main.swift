@@ -92,7 +92,7 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
     _ = zip_locate_file(archive, wasmFileName)
     size = zip_get_current_file_info_size(archive)
 
-    guard let data = malloc(size) else {
+    guard let data = SDL_malloc(size) else {
         zip_fclose(file)
         zip_close(archive)
         return nil
@@ -175,7 +175,7 @@ enum Main {
             func loadCart(_ path: String) {
                 ejectCart()
 
-                var data: UnsafeMutableRawPointer?
+                var data: UnsafeMutableRawPointer
                 var size: Int
 
                 if path.hasSuffix(".zip") {
@@ -183,7 +183,7 @@ enum Main {
                         print("failed to load wasm from zip: " + path)
                         return
                     }
-                    data = result.data
+                    data = result.data!
                     size = result.size
                 } else {
                     var rawSize = 0
@@ -196,11 +196,11 @@ enum Main {
                 }
                 var errBuf = [CChar](repeating: 0, count: 128)
                 let m = errBuf.withUnsafeMutableBufferPointer { eb in
-                    wasm_runtime_load(data.bindMemory(to: UInt8.self, capacity: size),
+                    wasm_runtime_load(data.assumingMemoryBound(to: UInt8.self),
                                       UInt32(size), eb.baseAddress, UInt32(eb.count))
                 }
                 guard let m else { print("cart load failed"); SDL_free(data); return }
-                wasm_runtime_set_wasi_args(m, nil, 0, nil, 0, nil, 0, nil, 0)
+                wasm_runtime_set_wasi_args(m, nil, 0, nil, 0, nil, 0, nil, nil)
                 let i = errBuf.withUnsafeMutableBufferPointer { eb in
                     wasm_runtime_instantiate(m, 256 * 1024, 0, eb.baseAddress, UInt32(eb.count))
                 }

@@ -14,11 +14,15 @@ clang -c -Os -DNDEBUG -ffunction-sections \
   -I vendor/wamr/core/iwasm/include -I "$KIT/Sources/KitABI/include" \
   vendor/natives.c -o vendor/natives.o
 
+clang -c -Os -DNDEBUG -ffunction-sections \
+  -I "$KIT/Sources/CZip/include" \
+  "$KIT/Sources/CZip/src/zip.c" -o vendor/zip.o
+
 GAME_SRC="$PWD/Sources" \
 GAME_MAIN="$PWD/host-main.swift" \
 OUT="$PWD/$OUT_NAME" \
 SDL_STATIC_A="$PWD/vendor/libSDL3.a" \
-EXTRA_OBJS="$PWD/vendor/natives.o" \
-EXTRA_LIBS="$PWD/vendor/libiwasm.a" \
-EXTRA_XCC="-Xcc -I$PWD/vendor/wamr/core/iwasm/include -Xcc -fmodule-map-file=$PWD/Sources/CWamr/module.modulemap -I $PWD/Sources/CWamr" \
+EXTRA_OBJS="$PWD/vendor/natives.o $PWD/vendor/zip.o" \
+EXTRA_LIBS="$PWD/vendor/libiwasm.a -lz" \
+EXTRA_XCC="-Xcc -I$PWD/vendor/wamr/core/iwasm/include -Xcc -fmodule-map-file=$KIT/Sources/CWamr/include/module.modulemap -I $KIT/Sources/CWamr/include -Xcc -fmodule-map-file=$KIT/Sources/CZip/include/module.modulemap -I $KIT/Sources/CZip/include" \
   "$KIT/native/build-native-game.sh"

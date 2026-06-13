@@ -27,6 +27,7 @@ static int wamr_load_asset_from_zip(wasm_exec_env_t e, const char* name, int nam
     return (int)read;
 }
 
+static void wamr_js_log(wasm_exec_env_t e, const char* p, int len) { js_log(p, len); }
 static void wamr_gfx_clear(wasm_exec_env_t e, uint32_t a0) { gfx_clear(a0); }
 static void wamr_gfx_save(wasm_exec_env_t e) { gfx_save(); }
 static void wamr_gfx_restore(wasm_exec_env_t e) { gfx_restore(); }
@@ -128,6 +129,7 @@ static void wamr_win_exit_fullscreen(wasm_exec_env_t e) { win_exit_fullscreen();
 static void wamr_win_download(wasm_exec_env_t e, const char* name, int nlen, const char* data, int dlen) { win_download(name, nlen, data, dlen); }
 
 NativeSymbol kit_natives[] = {
+    { "js_log", (void *)wamr_js_log, "(*~)", NULL },
     { "gfx_clear", (void *)wamr_gfx_clear, "(i)", NULL },
     { "gfx_save", (void *)wamr_gfx_save, "()", NULL },
     { "gfx_restore", (void *)wamr_gfx_restore, "()", NULL },

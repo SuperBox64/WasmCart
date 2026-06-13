@@ -84,6 +84,37 @@ func zipAssetBytes(_ name: String) -> [UInt8]? {
 // cart root, so assets and manifest.json resolve beside it
 nonisolated(unsafe) var cartDir: String? = nil
 
+// A bare .aot/.wasm dropped beside its cart zip still needs the zip's assets
+// and manifest: wasm2aot names every output <stem>.<target>.aot after the
+// zip's <stem>.wasm, so the sibling zip carrying that wasm is the cart root.
+func siblingCartZip(dir: String, stem: String) -> String? {
+    var count: Int32 = 0
+    guard let list = dir.withCString({ SDL_GlobDirectory($0, nil, 0, &count) }) else { return nil }
+    defer { SDL_free(UnsafeMutableRawPointer(list)) }
+    let want = stem + ".wasm"
+    for i in 0..<Int(count) {
+        guard let entry = list[i] else { continue }
+        let name = String(cString: entry)
+        guard name.hasSuffix(".zip") else { continue }
+        let zipPath = dir + "/" + name
+        guard let archive = zip_open(zipPath) else { continue }
+        var nameBuf = [CChar](repeating: 0, count: 256)
+        var found = false
+        for j in 0..<zip_get_num_files(archive) {
+            var size: size_t = 0
+            guard zip_get_file_info(archive, UInt32(j), &nameBuf, nameBuf.count, &size) == 0 else { continue }
+            let entryName = String(cString: nameBuf)
+            if entryName == want || entryName.hasSuffix("/" + want) {
+                found = true
+                break
+            }
+        }
+        zip_close(archive)
+        if found { return zipPath }
+    }
+    return nil
+}
+
 func dirAssetBytes(_ name: String) -> [UInt8]? {
     guard let dir = cartDir else { return nil }
     for candidate in [dir + "/" + name, dir + "/assets/" + name] {
@@ -133,6 +164,49 @@ func applyCartManifest() {
     }
 }
 
+// .aot carts are native code; wasm2aot.sh tags each output with the bare
+// arch (its ELF .aot runs on macOS/Linux/Android alike) or with os-arch
+// for Windows' msvc ABI, so one zip carries the .wasm plus a few .aot
+// files and every player gets native speed
+#if os(Windows)
+let aotOsName = "windows"
+let elfAotOk = false // windows code needs the msvc ABI, never the ELF .aot
+#elseif os(Android)
+let aotOsName = "android"
+let elfAotOk = true
+#elseif os(macOS)
+let aotOsName = "macos"
+let elfAotOk = true
+#else
+let aotOsName = "linux"
+let elfAotOk = true
+#endif
+
+var archTag: String {
+    #if arch(arm64)
+    return "arm64"
+    #elseif arch(x86_64)
+    return "x64"
+    #elseif arch(i386)
+    return "x86"
+    #else
+    return "arm32"
+    #endif
+}
+
+var platformTag: String { aotOsName + "-" + archTag }
+
+func nameContains(_ haystack: String, _ needle: String) -> Bool {
+    let h = Array(haystack.utf8), n = Array(needle.utf8)
+    guard !n.isEmpty, h.count >= n.count else { return false }
+    for i in 0...(h.count - n.count) {
+        var match = true
+        for j in 0..<n.count where h[i + j] != n[j] { match = false; break }
+        if match { return true }
+    }
+    return false
+}
+
 func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size: Int)? {
     print("DEBUG: opening zip: \(zipPath)")
     guard let archive = zip_open(zipPath) else {
@@ -142,6 +216,9 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
     print("DEBUG: zip opened")
 
     var wasmFile: String? = nil
+    var nativeAot: String? = nil
+    var archAot: String? = nil
+    var anyAot: String? = nil
     let numFiles = zip_get_num_files(archive)
     print("DEBUG: found \(numFiles) files in zip")
     var nameBuf = [CChar](repeating: 0, count: 256)
@@ -151,17 +228,24 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
         if zip_get_file_info(archive, UInt32(i), &nameBuf, nameBuf.count, &size) == 0 {
             let name = String(cString: nameBuf)
             print("DEBUG: file \(i): \(name) (\(size) bytes)")
-            if name.hasSuffix(".wasm") {
+            if name.hasSuffix(".aot") {
+                if anyAot == nil { anyAot = name }
+                if nativeAot == nil, nameContains(name, platformTag) { nativeAot = name }
+                if elfAotOk, archAot == nil, nameContains(name, archTag),
+                   !nameContains(name, "windows") { archAot = name }
+            } else if name.hasSuffix(".wasm"), wasmFile == nil {
                 wasmFile = name
-                print("DEBUG: found wasm file: \(name)")
-                break
             }
         }
     }
 
-    guard let wasmFileName = wasmFile else {
+    // native code for this machine beats the interpreter: the exact os-arch
+    // tag, then this arch's ELF .aot (shared by macOS/Linux/Android), then
+    // the .wasm; a lone untagged .aot is a last resort (a mismatched one is
+    // rejected by the loader)
+    guard let wasmFileName = nativeAot ?? archAot ?? wasmFile ?? anyAot else {
         zip_close(archive)
-        print("ERROR: no .wasm file found in zip")
+        print("ERROR: no .wasm or .aot cart found in zip")
         return nil
     }
 
@@ -350,12 +434,21 @@ enum Main {
                     wasm_runtime_load(data.assumingMemoryBound(to: UInt8.self),
                                       UInt32(size), eb.baseAddress, UInt32(eb.count))
                 }
-                guard let m else { print("cart load failed"); SDL_free(data); return }
+                guard let m else {
+                    print("cart load failed: " + String(cString: errBuf))
+                    SDL_free(data)
+                    return
+                }
                 wasm_runtime_set_wasi_args(m, nil, 0, nil, 0, nil, 0, nil, nil)
                 let i = errBuf.withUnsafeMutableBufferPointer { eb in
                     wasm_runtime_instantiate(m, 256 * 1024, 0, eb.baseAddress, UInt32(eb.count))
                 }
-                guard let i else { print("cart instantiate failed"); wasm_runtime_unload(m); SDL_free(data); return }
+                guard let i else {
+                    print("cart instantiate failed: " + String(cString: errBuf))
+                    wasm_runtime_unload(m)
+                    SDL_free(data)
+                    return
+                }
                 guard let e2 = wasm_runtime_create_exec_env(i, 256 * 1024) else {
                     wasm_runtime_deinstantiate(i); wasm_runtime_unload(m); SDL_free(data); return
                 }
@@ -372,10 +465,20 @@ enum Main {
                 if path.hasSuffix(".zip") {
                     if let z = currentZipArchive { preloadZipSounds(z) }
                 } else {
-                    Kit.shared.assetDir = dir + "/assets/sfx"
-                    cartDir = dir
-                    Kit.shared.assetProvider = dirAssetBytes
-                    applyCartManifest()
+                    var stem = base
+                    if let dot = stem.utf8.firstIndex(of: 46) { stem = String(stem[..<dot]) }
+                    if let zipPath = siblingCartZip(dir: dir, stem: stem), let archive = zip_open(zipPath) {
+                        currentZipArchive = archive
+                        setCurrentZipArchive(archive)
+                        Kit.shared.assetProvider = zipAssetBytes
+                        applyCartManifest()
+                        preloadZipSounds(archive)
+                    } else {
+                        Kit.shared.assetDir = dir + "/assets/sfx"
+                        cartDir = dir
+                        Kit.shared.assetProvider = dirAssetBytes
+                        applyCartManifest()
+                    }
                 }
 
                 if let pref = ("SuperBox64".withCString { org in "WasmCart".withCString { SDL_GetPrefPath(org, $0) } }) {

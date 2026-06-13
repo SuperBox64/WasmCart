@@ -17,6 +17,27 @@ web through WasmKit, which is the point: one cartridge, every console.
 
 Releases carry the host binaries and `{game}-cart.zip` files.
 
+## AOT carts
+
+Carts also play as precompiled native code. `wasm2aot.sh` cross-compiles a
+.wasm to `.aot` for every console platform from any single dev box (the
+vendored WAMR's `wamrc` + LLVM do the targeting, so a Mac builds the
+Windows, Linux, and Android carts too):
+
+```
+./wasm2aot.sh game.wasm                      # .aot for all default targets
+./wasm2aot.sh game-cart.zip                  # compile + pack them INTO the zip
+./wasm2aot.sh --targets=arm64 game.wasm
+./wasm2aot.sh --triple=riscv64-unknown-linux-gnu game.wasm   # anything LLVM knows
+```
+
+wamrc emits ELF-container `.aot` for every unix-like OS, so three files
+cover the whole console matrix: `game.arm64.aot` (macOS/Linux/Android on
+ARM64), `game.x64.aot` (same trio on Intel), and `game.windows-x64.aot`
+(the msvc ABI). The console loads the `.aot` matching the machine it runs
+on and falls back to interpreting the `.wasm`, so one zip stays universal.
+Bare `.aot` files load too - drop one on the window or put it in `carts/`.
+
 ## Host
 
 Embedded Swift (no Swift stdlib, no Foundation) talking to SDL3 and WAMR

@@ -23,7 +23,7 @@ final class ShellScene: SKScene {
     }
 
     private func vectorText(_ text: String, at pos: CGPoint, scale: CGFloat, alpha: CGFloat) {
-        let node = ShellFont.draw(text)
+        let node = ShellFont.draw(text, lineWidth: 1 / scale)
         node.position = pos
         node.setScale(scale)
         node.alpha = alpha
@@ -58,7 +58,7 @@ final class ShellScene: SKScene {
         for i in 0..<Int(count) {
             guard let entry = list[i] else { continue }
             let name = String(cString: entry)
-            guard name.hasSuffix(".zip") || name.hasSuffix(".wasm") else { continue }
+            guard name.hasSuffix(".zip") || name.hasSuffix(".wasm") || name.hasSuffix(".aot") else { continue }
             guard !name.hasPrefix(".") else { continue }
             carts.append(dir + "/" + name)
             cartNames.append(ShellFont.displayName(name))
@@ -83,10 +83,10 @@ final class ShellScene: SKScene {
         let slotY = size.height * 0.72
         let slot = SKShapeNode(rect: CGRect(x: size.width / 2 - 280, y: slotY, width: 560, height: 100))
         slot.strokeColor = SKColor(white: 1, alpha: 0.6)
-        slot.lineWidth = 2
+        slot.lineWidth = 1
         slot.name = "slot"
         lines.addChild(slot)
-        let slotLabel = ShellFont.draw("WASMCART")
+        let slotLabel = ShellFont.draw("WASMCART", lineWidth: 1 / 3.4)
         slotLabel.position = CGPoint(x: size.width / 2, y: slotY + 50)
         slotLabel.setScale(3.4)
         slotLabel.alpha = 0.625
@@ -110,7 +110,7 @@ final class ShellScene: SKScene {
                     let box = SKShapeNode(rect: CGRect(x: size.width / 2 - 360, y: y - rowH / 2 + 4,
                                                        width: 720, height: rowH - 8))
                     box.strokeColor = SKColor(white: 1, alpha: 0.8)
-                    box.lineWidth = 1.5
+                    box.lineWidth = 1
                     lines.addChild(box)
                 }
                 y -= rowH
@@ -256,7 +256,9 @@ enum ShellFont {
         return out.withUnsafeBufferPointer { String(cString: $0.baseAddress!) }
     }
 
-    static func draw(_ text: String) -> SKNode {
+    // lineWidth is in the glyph's own (unscaled) space; callers that scale the
+    // returned node pass 1/scale so every stroke renders a true 1px on screen.
+    static func draw(_ text: String, lineWidth: CGFloat = 1) -> SKNode {
         let node = SKNode()
         let advance: CGFloat = 14
         let width = CGFloat(text.count) * advance
@@ -270,7 +272,7 @@ enum ShellFont {
                 }
                 let glyph = SKShapeNode(path: path)
                 glyph.strokeColor = .white
-                glyph.lineWidth = 2
+                glyph.lineWidth = lineWidth
                 glyph.position = CGPoint(x: x, y: -7)
                 node.addChild(glyph)
             }

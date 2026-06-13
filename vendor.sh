@@ -1,7 +1,8 @@
 #!/bin/bash
 # Vendor BOTH dependencies from source - no package managers, any platform.
-# SDL3: static, minimal subsystems. WAMR: static fast-interpreter + WASI,
-# no JIT, no AOT, no SIMD - the no-dead-code build.
+# SDL3: static, minimal subsystems. WAMR: static fast-interpreter + AOT
+# loader + WASI, no JIT, no SIMD. Carts ship as .wasm (interpreted) or
+# .aot (precompiled with wasm2aot.sh for native speed).
 set -euo pipefail
 cd "$(dirname "$0")"
 SDLVER="${SDL_VER:-release-3.4.10}"
@@ -26,7 +27,7 @@ if [ ! -f vendor/libiwasm.a ]; then
   cmake -S "vendor/wamr/product-mini/platforms/$PLATFORM" -B vendor/wamr-build \
     -DCMAKE_BUILD_TYPE=MinSizeRel \
     -DWAMR_BUILD_INTERP=1 -DWAMR_BUILD_FAST_INTERP=1 \
-    -DWAMR_BUILD_AOT=0 -DWAMR_BUILD_JIT=0 -DWAMR_BUILD_FAST_JIT=0 \
+    -DWAMR_BUILD_AOT=1 -DWAMR_BUILD_JIT=0 -DWAMR_BUILD_FAST_JIT=0 \
     -DWAMR_BUILD_LIBC_WASI=1 -DWAMR_BUILD_LIBC_BUILTIN=0 \
     -DWAMR_BUILD_SIMD=0 -DWAMR_BUILD_MULTI_MODULE=0 \
     -DWAMR_BUILD_BULK_MEMORY=1 -DWAMR_BUILD_REF_TYPES=1 >/dev/null

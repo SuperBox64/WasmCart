@@ -80,6 +80,52 @@ func zipAssetBytes(_ name: String) -> [UInt8]? {
     return nil
 }
 
+// Color-emoji fallback: when no emoji font is installed, the Kit asks for a
+// codepoint's PNG and we pull <cp>.png out of apple-color-emoji.zip on the fly
+// (no extraction). The archive is opened once, beside the binary; CZip's
+// folder-prefix fallback matches the zip's apple-color-emoji/ entries by bare
+// name. The decoded texture is cached by the Kit, so each glyph reads once.
+nonisolated(unsafe) var emojiZip: OpaquePointer? = nil
+nonisolated(unsafe) var emojiZipOpened = false
+
+private func cpHexUpper(_ v: Int32) -> String {
+    let digits = Array("0123456789ABCDEF")
+    var n = Int(v)
+    var out: [Character] = []
+    if n == 0 { out = ["0"] }
+    while n > 0 { out.insert(digits[n & 0xF], at: 0); n >>= 4 }
+    while out.count < 4 { out.insert("0", at: 0) }
+    return String(out)
+}
+
+func emojiZipPng(_ cp: Int32) -> [UInt8]? {
+    if !emojiZipOpened {
+        emojiZipOpened = true
+        var candidates: [String] = []
+        if let base = SDL_GetBasePath() {
+            candidates.append(String(cString: base) + "apple-color-emoji.zip")
+            SDL_free(UnsafeMutableRawPointer(mutating: base))
+        }
+        candidates.append("apple-color-emoji.zip")
+        for c in candidates where emojiZip == nil { emojiZip = zip_open(c) }
+    }
+    guard let archive = emojiZip else { return nil }
+    let hex = cpHexUpper(cp)
+    for name in ["apple-color-emoji/u\(hex).png", "u\(hex).png"] {
+        if let file = name.withCString({ zip_fopen(archive, $0) }) {
+            let size = zip_fget_size(file)
+            var out = [UInt8](repeating: 0, count: size)
+            let read = out.withUnsafeMutableBytes { zip_fread($0.baseAddress, size, file) }
+            zip_fclose(file)
+            if read == size {
+                print("emoji png: apple-color-emoji.zip!\(name) (\(size) bytes, cp U+\(hex))")
+                return out
+            }
+        }
+    }
+    return nil
+}
+
 // A bare .wasm cart plays exactly like its zip: the wasm's folder is the
 // cart root, so assets and manifest.json resolve beside it
 nonisolated(unsafe) var cartDir: String? = nil
@@ -333,23 +379,40 @@ enum Main {
         kitEscapeReserved = true
         kitHostInit(appName: "WasmCart")
 
-        // games fall back to the platform's color emoji for codepoints their
-        // fonts lack: Apple Color Emoji (sbix) on macOS, the installed Noto
-        // (CBDT) on Linux, or any NotoColorEmoji.ttf dropped next to the binary
-        var emojiPaths = [
-            "/System/Library/Fonts/Apple Color Emoji.ttc",
+        // Three emoji sources, picked from the shell's EMOJI menu (apple / png /
+        // noto). Load each independently so the menu can switch live:
+        //  - apple: Apple Color Emoji (sbix), macOS only
+        //  - png:   apple-color-emoji.zip PNGs, pulled on the fly, any platform
+        //  - noto:  NotoColorEmoji (CBDT), bundled or system-installed
+        func loadEmojiFont(_ paths: [String], _ set: (UnsafePointer<UInt8>, Int) -> Void) {
+            for path in paths {
+                var size = 0
+                guard let data = path.withCString({ SDL_LoadFile($0, &size) }), size > 0 else { continue }
+                // kit_emoji_init keeps pointers INTO this buffer for the app's
+                // lifetime, so it must stay alive — never SDL_free it. (Freeing
+                // it left the font's cmap/CBDT pointers dangling, which read back
+                // as garbage and crashed the glyph lookup.)
+                set(UnsafeRawPointer(data).bindMemory(to: UInt8.self, capacity: size), size)
+                return
+            }
+        }
+        loadEmojiFont(["/System/Library/Fonts/Apple Color Emoji.ttc"]) {
+            Kit.shared.setEmojiFont($0, $1)
+        }
+        var notoPaths = [
             "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
             "/usr/share/fonts/noto/NotoColorEmoji.ttf",
         ]
         if let base = SDL_GetBasePath() {
-            emojiPaths.append(String(cString: base) + "NotoColorEmoji.ttf")
+            notoPaths.insert(String(cString: base) + "NotoColorEmoji.ttf", at: 0)
         }
-        for path in emojiPaths {
-            var size = 0
-            guard let data = path.withCString({ SDL_LoadFile($0, &size) }), size > 0 else { continue }
-            Kit.shared.setEmojiFont(UnsafeRawPointer(data).bindMemory(to: UInt8.self, capacity: size), size)
-            if Kit.shared.emojiFont != nil { break }
-            SDL_free(data)
+        loadEmojiFont(notoPaths) { Kit.shared.setNotoEmojiFont($0, $1) }
+        Kit.shared.emojiPngProvider = emojiZipPng
+        // restore the saved mode (default apple → on non-Mac that falls to png,
+        // then noto, so Apple art wins and Noto is the last resort). Namespaced
+        // with the console name so it never collides with a cart's own keys.
+        if let saved = Kit.shared.storeGet("WasmCart.emojiMode"), let m = Int32(saved) {
+            Kit.shared.setEmojiMode(m)
         }
 
         guard wasm_runtime_init() else { fatalError("wamr init failed") }
@@ -405,6 +468,15 @@ enum Main {
                 SDL_SetAtomicInt(&cartLoaded, 0)
                 Kit.shared.stopAllVoices()
                 while Kit.shared.popEvent() != nil {}
+                // back the console's own store, so shell settings (emoji mode)
+                // persist to store.tsv and never land in the last cart's file
+                if let pref = ("SuperBox64".withCString { o in "WasmCart".withCString { SDL_GetPrefPath(o, $0) } }) {
+                    Kit.shared.storePath = String(cString: pref) + "store.tsv"
+                    SDL_free(UnsafeMutableRawPointer(mutating: pref))
+                }
+                Kit.shared.storeKeys = []
+                Kit.shared.storeVals = []
+                Kit.shared.loadStore()
             }
 
             func loadCart(_ path: String) {
@@ -428,6 +500,37 @@ enum Main {
                     }
                     data = rawData
                     size = rawSize
+                }
+                // DEBUG: dump first 4 bytes (magic), size, and head/tail
+                // hex of the buffer about to be handed to wasm_runtime_load.
+                // \0asm = wasm, \0aot = WAMR AOT. Anything else means the
+                // loader is getting a wrong/truncated buffer. Head+tail hex
+                // lets you compare against `xxd` on the wasm file on disk.
+                do {
+                    let bytes = data.assumingMemoryBound(to: UInt8.self)
+                    func hex2(_ v: UInt8) -> String {
+                        let d = Array("0123456789abcdef")
+                        return String(d[Int(v >> 4)]) + String(d[Int(v & 0xF)])
+                    }
+                    func hexRange(_ start: Int, _ count: Int) -> String {
+                        var s = ""
+                        for i in 0..<count {
+                            let idx = start + i
+                            if idx < 0 || idx >= size { continue }
+                            if !s.isEmpty { s += " " }
+                            s += hex2(bytes[idx])
+                        }
+                        return s
+                    }
+                    let b0 = size > 0 ? bytes[0] : 0
+                    let b1 = size > 1 ? bytes[1] : 0
+                    let b2 = size > 2 ? bytes[2] : 0
+                    let b3 = size > 3 ? bytes[3] : 0
+                    var magicAscii = ""
+                    for b in [b0, b1, b2, b3] {
+                        magicAscii += (b >= 0x20 && b < 0x7f) ? String(UnicodeScalar(b)) : "."
+                    }
+                    print("DEBUG: wasm_runtime_load buf size=\(size) magic='\(magicAscii)' head16=[\(hexRange(0, 16))] tail16=[\(hexRange(max(0, size - 16), 16))]")
                 }
                 var errBuf = [CChar](repeating: 0, count: 128)
                 let m = errBuf.withUnsafeMutableBufferPointer { eb in
@@ -489,8 +592,20 @@ enum Main {
                 Kit.shared.storeVals = []
                 Kit.shared.loadStore()
 
-                if let initFn = "_initialize".withCString({ wasm_runtime_lookup_function(i, $0) }) {
-                    _ = wasm_runtime_call_wasm(e2, initFn, 0, nil)
+                // Do NOT call _initialize here. WAMR's wasm_runtime_instantiate
+                // already runs a WASI reactor's _initialize (which runs
+                // __wasm_call_ctors) automatically, for BOTH the interpreter and
+                // AOT. Calling it a second time re-enters the reactor's run-once
+                // guard, which is compiled to `unreachable` — that was the
+                // long-standing "boot trapped: unreachable" on full-Swift-WASI
+                // carts (the old code called it explicitly). By the time we reach
+                // boot() the cart's globals/runtime are already initialized.
+                if let ex = wasm_runtime_get_exception(i) {
+                    print("post-instantiate trapped: " + String(cString: ex))
+                    wasm_runtime_dump_call_stack(e2)
+                    wasm_runtime_destroy_exec_env(e2); wasm_runtime_deinstantiate(i)
+                    wasm_runtime_unload(m); SDL_free(data)
+                    return
                 }
                 guard let bootFn = "boot".withCString({ wasm_runtime_lookup_function(i, $0) }),
                       let fFn = "frame".withCString({ wasm_runtime_lookup_function(i, $0) }) else {
@@ -502,6 +617,7 @@ enum Main {
                 _ = wasm_runtime_call_wasm(e2, bootFn, 0, nil)
                 if let ex = wasm_runtime_get_exception(i) {
                     print("boot trapped: " + String(cString: ex))
+                    wasm_runtime_dump_call_stack(e2)
                     wasm_runtime_destroy_exec_env(e2); wasm_runtime_deinstantiate(i)
                     wasm_runtime_unload(m); SDL_free(data)
                     return

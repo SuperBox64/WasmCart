@@ -30,7 +30,8 @@ if [ ! -f vendor/libiwasm.a ]; then
     -DWAMR_BUILD_AOT=1 -DWAMR_BUILD_JIT=0 -DWAMR_BUILD_FAST_JIT=0 \
     -DWAMR_BUILD_LIBC_WASI=1 -DWAMR_BUILD_LIBC_BUILTIN=0 \
     -DWAMR_BUILD_SIMD=0 -DWAMR_BUILD_MULTI_MODULE=0 \
-    -DWAMR_BUILD_BULK_MEMORY=1 -DWAMR_BUILD_REF_TYPES=1 >/dev/null
+    -DWAMR_BUILD_BULK_MEMORY=1 -DWAMR_BUILD_REF_TYPES=1 \
+    -DWAMR_BUILD_DUMP_CALL_STACK=1 -DWAMR_BUILD_CUSTOM_NAME_SECTION=1 >/dev/null
   cmake --build vendor/wamr-build -j  >/dev/null
   cp vendor/wamr-build/libiwasm.a vendor/
 fi

@@ -28,6 +28,11 @@ static int wamr_load_asset_from_zip(wasm_exec_env_t e, const char* name, int nam
 }
 
 static void wamr_js_log(wasm_exec_env_t e, const char* p, int len) { js_log(p, len); }
+// SKView debug-HUD flags (bit0 showsFPS, bit1 showsDrawCount). The kit pushes
+// these unconditionally; the native console has no HUD renderer, so it's a
+// no-op (matches the embedded JS runtime). The import MUST be registered or
+// WAMR fails to link the cart at load -> the game never starts.
+static void stub_dbg_set_overlays(wasm_exec_env_t e, int flags) { (void)flags; }
 static void wamr_gfx_clear(wasm_exec_env_t e, uint32_t a0) { gfx_clear(a0); }
 static void wamr_gfx_save(wasm_exec_env_t e) { gfx_save(); }
 static void wamr_gfx_restore(wasm_exec_env_t e) { gfx_restore(); }
@@ -130,6 +135,7 @@ static void wamr_win_download(wasm_exec_env_t e, const char* name, int nlen, con
 
 NativeSymbol kit_natives[] = {
     { "js_log", (void *)wamr_js_log, "(*~)", NULL },
+    { "dbg_set_overlays", (void *)stub_dbg_set_overlays, "(i)", NULL },
     { "gfx_clear", (void *)wamr_gfx_clear, "(i)", NULL },
     { "gfx_save", (void *)wamr_gfx_save, "()", NULL },
     { "gfx_restore", (void *)wamr_gfx_restore, "()", NULL },

@@ -672,7 +672,9 @@ enum Main {
                     var arg = wasm_val_t()
                     arg.kind = wasm_valkind_t(WASM_F64.rawValue)
                     arg.of.f64 = Double(dt)
+                    let _ct0 = SDL_GetTicksNS()
                     _ = wasm_runtime_call_wasm_a(exec2, fFn, 0, nil, 1, &arg)
+                    Kit.shared.profCartNs += SDL_GetTicksNS() - _ct0
                     if let ex = wasm_runtime_get_exception(inst2) {
                         print("frame trapped: " + String(cString: ex))
                         ejectCart()
@@ -714,8 +716,10 @@ enum Main {
                     SDL_SetAtomicInt(&currentFPS, Int32(fps))
                     let pk = Kit.shared
                     let pn = UInt64(max(1, fpsFrames))
-                    print("PROF fps=\(fps)  img=\(pk.profImgNs/pn/1000)us  txt=\(pk.profTxtNs/pn/1000)us  present=\(pk.profPresentNs/pn/1000)us  (per frame; /1000=ms)")
-                    pk.profImgNs = 0; pk.profTxtNs = 0; pk.profPresentNs = 0
+                    let logicNs = pk.profCartNs >= (pk.profImgNs + pk.profTxtNs) ? pk.profCartNs - pk.profImgNs - pk.profTxtNs : pk.profCartNs
+                    let workNs = logicNs + pk.profImgNs + pk.profTxtNs + pk.profBlitNs   // real per-frame work (no vsync)
+                    print("PROF fps=\(fps)  WORK=\(workNs/pn/1000)us | logic=\(logicNs/pn/1000)us img=\(pk.profImgNs/pn/1000)us txt=\(pk.profTxtNs/pn/1000)us blit=\(pk.profBlitNs/pn/1000)us  ||  vsync-idle=\(pk.profVsyncNs/pn/1000)us  (/1000=ms)")
+                    pk.profImgNs = 0; pk.profTxtNs = 0; pk.profPresentNs = 0; pk.profCartNs = 0; pk.profBlitNs = 0; pk.profVsyncNs = 0
                     fpsFrames = 0
                     fpsStart = fnow
                 }

@@ -61,6 +61,17 @@ func openCartDialog() {
 nonisolated(unsafe) var wantDialog = SDL_AtomicInt(value: 0)
 nonisolated(unsafe) var currentFPS = SDL_AtomicInt(value: 0)
 
+// The cart's dbg_set_overlays (driven by SKView.showsFPS/showsDrawCount) routes here
+// through the natives.c thunk so the host can draw the runtime.js-style on-screen HUD.
+@_cdecl("wc_set_overlays")
+func wc_set_overlays(_ flags: Int32) { Kit.shared.dbgOverlayFlags = flags }
+
+// "12.3" ms string from accumulated ns over a frame count (no printf in embedded Swift).
+func msTenths(_ ns: UInt64, _ frames: UInt64) -> String {
+    let us = ns / max(1, frames) / 1000
+    return "\(us / 1000).\((us % 1000) / 100)"
+}
+
 // MARK: - zip loading
 
 // Kit asset source while a cart is inserted: images/fonts/levels resolve
@@ -654,6 +665,7 @@ enum Main {
             var vsyncOn: Int32 = 0
             _ = SDL_GetRenderVSync(Kit.shared.renderer, &vsyncOn)
             var fpsFrames = 0
+            var maxFrameWorkNs: UInt64 = 0
             var fpsStart = SDL_GetTicksNS()
             var last = SDL_GetTicksNS()
             while SDL_GetAtomicInt(&runFlag) == 1 {
@@ -674,7 +686,9 @@ enum Main {
                     arg.of.f64 = Double(dt)
                     let _ct0 = SDL_GetTicksNS()
                     _ = wasm_runtime_call_wasm_a(exec2, fFn, 0, nil, 1, &arg)
-                    Kit.shared.profCartNs += SDL_GetTicksNS() - _ct0
+                    let _frameNs = SDL_GetTicksNS() - _ct0
+                    Kit.shared.profCartNs += _frameNs
+                    if _frameNs > maxFrameWorkNs { maxFrameWorkNs = _frameNs }
                     if let ex = wasm_runtime_get_exception(inst2) {
                         print("frame trapped: " + String(cString: ex))
                         ejectCart()
@@ -719,7 +733,11 @@ enum Main {
                     let logicNs = pk.profCartNs >= (pk.profImgNs + pk.profTxtNs) ? pk.profCartNs - pk.profImgNs - pk.profTxtNs : pk.profCartNs
                     let workNs = logicNs + pk.profImgNs + pk.profTxtNs + pk.profBlitNs   // real per-frame work (no vsync)
                     print("PROF fps=\(fps)  WORK=\(workNs/pn/1000)us | logic=\(logicNs/pn/1000)us img=\(pk.profImgNs/pn/1000)us txt=\(pk.profTxtNs/pn/1000)us blit=\(pk.profBlitNs/pn/1000)us  ||  vsync-idle=\(pk.profVsyncNs/pn/1000)us  (/1000=ms)")
+                    pk.hudLine1 = "FPS \(fps)  frame \(msTenths(workNs, pn))  avg \(msTenths(workNs, pn))  max \(msTenths(maxFrameWorkNs, 1))ms"
+                    pk.hudLine2 = "img \(pk.profImgCount/pn)/\(msTenths(pk.profImgNs, pn))ms  txt \(pk.profTxtCount/pn)/\(msTenths(pk.profTxtNs, pn))ms  rest \(msTenths(logicNs, pn))ms"
+                    pk.hudLine3 = "glyph \(pk.glyphCacheCount)  img# \(pk.imageLiveCount)"
                     pk.profImgNs = 0; pk.profTxtNs = 0; pk.profPresentNs = 0; pk.profCartNs = 0; pk.profBlitNs = 0; pk.profVsyncNs = 0
+                    pk.profImgCount = 0; pk.profTxtCount = 0; maxFrameWorkNs = 0
                     fpsFrames = 0
                     fpsStart = fnow
                 }

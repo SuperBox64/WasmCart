@@ -84,18 +84,28 @@ func zipAssetBytes(_ name: String) -> [UInt8]? {
     // into subfolders (scenes/, images/, particles/, fonts/, sfx/, voice/). Try
     // those so e.g. GameMenu.json resolves to assets/scenes/GameMenu.json — without
     // this the scene/particle JSON never loads and the cart renders nothing.
-    for candidate in [name, "assets/" + name,
-                      "assets/scenes/" + name, "assets/particles/" + name,
-                      "assets/images/" + name, "assets/fonts/" + name,
-                      "assets/sfx/" + name, "assets/voice/" + name] {
-        if let file = candidate.withCString({ zip_fopen(archive, $0) }) {
-            let size = zip_fget_size(file)
-            var out = [UInt8](repeating: 0, count: size)
-            let read = out.withUnsafeMutableBytes { zip_fread($0.baseAddress, size, file) }
-            zip_fclose(file)
-            return read == size ? out : nil
+    func tryName(_ n: String) -> [UInt8]? {
+        for candidate in [n, "assets/" + n,
+                          "assets/scenes/" + n, "assets/particles/" + n,
+                          "assets/images/" + n, "assets/fonts/" + n,
+                          "assets/sfx/" + n, "assets/voice/" + n] {
+            if let file = candidate.withCString({ zip_fopen(archive, $0) }) {
+                let size = zip_fget_size(file)
+                var out = [UInt8](repeating: 0, count: size)
+                let read = out.withUnsafeMutableBytes { zip_fread($0.baseAddress, size, file) }
+                zip_fclose(file)
+                return read == size ? out : nil
+            }
         }
+        return nil
     }
+    if let d = tryName(name) { return d }
+    // Case-insensitive fallback: the web asset export lowercases filenames, but the
+    // .sks/JSON (and code) keep original casing — e.g. particleTexture "blackHole1"
+    // vs the shipped blackhole1.svg (the white-hole/level-up effect). Apple's
+    // case-insensitive filesystem hides this; the zip is strict, so retry lowercased.
+    let low = name.lowercased()
+    if low != name, let d = tryName(low) { return d }
     return nil
 }
 

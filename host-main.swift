@@ -68,7 +68,15 @@ nonisolated(unsafe) var currentFPS = SDL_AtomicInt(value: 0)
 // top-level folder prefix, so Finder-zipped carts work too)
 func zipAssetBytes(_ name: String) -> [UInt8]? {
     guard let archive = currentZipArchive else { return nil }
-    for candidate in [name, "assets/" + name] {
+    // The Kit asks by basename (SKScene(fileNamed:"GameMenu") -> "GameMenu.json",
+    // SKTexture(imageNamed:"x") -> "x.svg"), but the web asset tree groups files
+    // into subfolders (scenes/, images/, particles/, fonts/, sfx/, voice/). Try
+    // those so e.g. GameMenu.json resolves to assets/scenes/GameMenu.json — without
+    // this the scene/particle JSON never loads and the cart renders nothing.
+    for candidate in [name, "assets/" + name,
+                      "assets/scenes/" + name, "assets/particles/" + name,
+                      "assets/images/" + name, "assets/fonts/" + name,
+                      "assets/sfx/" + name, "assets/voice/" + name] {
         if let file = candidate.withCString({ zip_fopen(archive, $0) }) {
             let size = zip_fget_size(file)
             var out = [UInt8](repeating: 0, count: size)
@@ -411,6 +419,14 @@ enum Main {
         // restore the saved mode (default apple → on non-Mac that falls to png,
         // then noto, so Apple art wins and Noto is the last resort). Namespaced
         // with the console name so it never collides with a cart's own keys.
+        // Load the console store.tsv FIRST — at startup Kit's store isn't pointed at
+        // it yet (that only happens per-cart in ejectCart), so without this the saved
+        // NOTO/PNG pick was ignored and every glyph fell back to APPLE.
+        if let pref = ("SuperBox64".withCString { o in "WasmCart".withCString { SDL_GetPrefPath(o, $0) } }) {
+            Kit.shared.storePath = String(cString: pref) + "store.tsv"
+            SDL_free(UnsafeMutableRawPointer(mutating: pref))
+            Kit.shared.loadStore()
+        }
         if let saved = Kit.shared.storeGet("WasmCart.emojiMode"), let m = Int32(saved) {
             Kit.shared.setEmojiMode(m)
         }
@@ -477,6 +493,14 @@ enum Main {
                 Kit.shared.storeKeys = []
                 Kit.shared.storeVals = []
                 Kit.shared.loadStore()
+                // Re-apply the saved console emoji mode now that store.tsv is loaded. The
+                // startup read (main init) runs BEFORE this store exists, so the user's
+                // NOTO/PNG pick was ignored and every glyph fell back to APPLE. With Noto
+                // + the PNG zip both loaded, this makes either a real replacement "for
+                // anything", and on non-Mac (no Apple Color Emoji) it's what renders.
+                if let saved = Kit.shared.storeGet("WasmCart.emojiMode"), let m = Int32(saved) {
+                    Kit.shared.setEmojiMode(m)
+                }
             }
 
             func loadCart(_ path: String) {
@@ -681,13 +705,17 @@ enum Main {
                     // empty slot: the shell scene runs like any kit game
                     shellTick(Double(dt))
                 }
-                kitHostPresent()
+                let _ppt0 = SDL_GetTicksNS(); kitHostPresent(); Kit.shared.profPresentNs += SDL_GetTicksNS() - _ppt0
 
                 fpsFrames += 1
                 let fnow = SDL_GetTicksNS()
                 if fnow - fpsStart >= 1_000_000_000 {
                     let fps = (UInt64(fpsFrames) * 1_000_000_000 + (fnow - fpsStart) / 2) / (fnow - fpsStart)
                     SDL_SetAtomicInt(&currentFPS, Int32(fps))
+                    let pk = Kit.shared
+                    let pn = UInt64(max(1, fpsFrames))
+                    print("PROF fps=\(fps)  img=\(pk.profImgNs/pn/1000)us  txt=\(pk.profTxtNs/pn/1000)us  present=\(pk.profPresentNs/pn/1000)us  (per frame; /1000=ms)")
+                    pk.profImgNs = 0; pk.profTxtNs = 0; pk.profPresentNs = 0
                     fpsFrames = 0
                     fpsStart = fnow
                 }

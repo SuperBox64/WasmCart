@@ -13,7 +13,22 @@ final class ShellScene: SKScene {
     private var selected = 0
     private var rowRects: [CGRect] = []
     private var dialogRect = CGRect.zero
+    private var emojiRect = CGRect.zero
     private var rescanCountdown = 0
+
+    private let emojiModeNames = ["APPLE", "PNG", "NOTO"]
+    private var emojiMode: Int32 {
+        get { Kit.shared.emojiMode }
+        set {
+            Kit.shared.setEmojiMode(newValue)
+            Kit.shared.storeSet("WasmCart.emojiMode", "\(newValue)")
+            Kit.shared.saveStore()
+        }
+    }
+    private func cycleEmojiMode() {
+        emojiMode = (emojiMode + 1) % Int32(emojiModeNames.count)
+        buildUI()
+    }
 
     override func didMove(to view: SKView) {
         backgroundColor = .black
@@ -121,8 +136,13 @@ final class ShellScene: SKScene {
         vectorText("OPEN FILE", at: CGPoint(x: size.width / 2, y: y), scale: 1.0, alpha: 0.65)
         dialogRect = CGRect(x: size.width / 2 - 240, y: y - rowH / 2, width: 480, height: rowH)
 
+        y -= rowH
+        let mode = emojiModeNames[Int(emojiMode) % emojiModeNames.count]
+        vectorText("EMOJI: " + mode, at: CGPoint(x: size.width / 2, y: y), scale: 1.0, alpha: 0.65)
+        emojiRect = CGRect(x: size.width / 2 - 240, y: y - rowH / 2, width: 480, height: rowH)
+
         vectorText("ARROWS SELECT  ENTER OR DOUBLE CLICK LOADS  DROP A WASM ANYTIME", at: CGPoint(x: size.width / 2, y: size.height * 0.10), scale: 0.9, alpha: 0.5)
-        vectorText("CTRL ESC EJECTS", at: CGPoint(x: size.width / 2, y: size.height * 0.06), scale: 0.9, alpha: 0.5)
+        vectorText("CLICK EMOJI TO SWITCH MODE   CTRL ESC EJECTS", at: CGPoint(x: size.width / 2, y: size.height * 0.06), scale: 0.9, alpha: 0.5)
     }
 
     private func loadSelected() {
@@ -148,6 +168,8 @@ final class ShellScene: SKScene {
             } else {
                 loadSelected()
             }
+        case 14:                       // E cycles the emoji mode
+            cycleEmojiMode()
         default:
             break
         }
@@ -156,6 +178,10 @@ final class ShellScene: SKScene {
     // single click selects, a real OS double click loads (rows and OPEN FILE)
     override func mouseDown(with event: NSEvent) {
         let p = event.location(in: self)
+        if emojiRect.contains(p) {
+            cycleEmojiMode()
+            return
+        }
         for (i, rect) in rowRects.enumerated() where rect.contains(p) {
             if event.clickCount >= 2, selected == i {
                 loadSelected()

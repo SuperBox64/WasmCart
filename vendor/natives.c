@@ -41,6 +41,7 @@ static void wamr_gfx_scale(wasm_exec_env_t e, float a0, float a1) { gfx_scale(a0
 static void wamr_gfx_snap_translation(wasm_exec_env_t e) { gfx_snap_translation(); }
 static void wamr_gfx_rotate(wasm_exec_env_t e, float a0) { gfx_rotate(a0); }
 static void wamr_gfx_set_alpha(wasm_exec_env_t e, float a0) { gfx_set_alpha(a0); }
+static void wamr_gfx_set_tint(wasm_exec_env_t e, float a0, float a1, float a2, float a3) { gfx_set_tint(a0, a1, a2, a3); }
 static void wamr_gfx_set_blend(wasm_exec_env_t e, int a0) { gfx_set_blend(a0); }
 static void wamr_gfx_set_line_style(wasm_exec_env_t e, int join, int cap, float miterLimit) { gfx_set_line_style(join, cap, miterLimit); }
 static void wamr_gfx_fill_rect(wasm_exec_env_t e, float a0, float a1, float a2, float a3, uint32_t a4) { gfx_fill_rect(a0, a1, a2, a3, a4); }
@@ -144,6 +145,7 @@ NativeSymbol kit_natives[] = {
     { "gfx_snap_translation", (void *)wamr_gfx_snap_translation, "()", NULL },
     { "gfx_rotate", (void *)wamr_gfx_rotate, "(f)", NULL },
     { "gfx_set_alpha", (void *)wamr_gfx_set_alpha, "(f)", NULL },
+    { "gfx_set_tint", (void *)wamr_gfx_set_tint, "(ffff)", NULL },
     { "gfx_set_blend", (void *)wamr_gfx_set_blend, "(i)", NULL },
     { "gfx_set_line_style", (void *)wamr_gfx_set_line_style, "(iif)", NULL },
     { "gfx_fill_rect", (void *)wamr_gfx_fill_rect, "(ffffi)", NULL },
@@ -237,7 +239,7 @@ NativeSymbol kit_natives[] = {
     { "win_download", (void *)wamr_win_download, "(*~*~)", NULL },
     { "load_asset_from_zip", (void *)wamr_load_asset_from_zip, "(*~*~)i", NULL },
 };
-int kit_natives_count = 100;
+int kit_natives_count = (int)(sizeof(kit_natives) / sizeof(kit_natives[0]));
 
 bool kit_register_natives(void) {
     return wasm_runtime_register_natives("env", kit_natives, (uint32_t)kit_natives_count);

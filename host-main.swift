@@ -61,6 +61,11 @@ func openCartDialog() {
 nonisolated(unsafe) var wantDialog = SDL_AtomicInt(value: 0)
 nonisolated(unsafe) var currentFPS = SDL_AtomicInt(value: 0)
 
+// Basename + mode of the currently loaded cart payload, surfaced to the main
+// thread so the title bar shows which file the AOT picker chose, e.g.
+// "ufoemoji-embedded.arm64.aot [AOT]" or "ufoemoji-embedded.wasm [interp]".
+nonisolated(unsafe) var cartPayloadLabel: String? = nil
+
 // The cart's dbg_set_overlays (driven by SKView.showsFPS/showsDrawCount) routes here
 // through the natives.c thunk so the host can draw the runtime.js-style on-screen HUD.
 @_cdecl("wc_set_overlays")
@@ -245,16 +250,12 @@ func applyCartManifest() {
 // files and every player gets native speed
 #if os(Windows)
 let aotOsName = "windows"
-let elfAotOk = false // windows code needs the msvc ABI, never the ELF .aot
 #elseif os(Android)
 let aotOsName = "android"
-let elfAotOk = true
 #elseif os(macOS)
 let aotOsName = "macos"
-let elfAotOk = true
 #else
 let aotOsName = "linux"
-let elfAotOk = true
 #endif
 
 var archTag: String {
@@ -271,6 +272,21 @@ var archTag: String {
 
 var platformTag: String { aotOsName + "-" + archTag }
 
+// The AOT tag this machine should run first. wasm2aot.sh emits one ELF .aot
+// per arch (arm64/x64/x86) that loads on macOS, Linux AND Android of that arch,
+// so every unix host's native pick is just its arch tag. Windows is the odd
+// one out: only a COFF windows-x64.aot is produced, and it serves Windows
+// Intel natively and Windows ARM via the loader's arch check (which rejects it
+// → roll to .wasm). So on Windows the native tag is "windows-x64" regardless of
+// host arch, matching the user's "windows x86_64 for windows arm and intel".
+var nativeAotTag: String {
+    #if os(Windows)
+    return "windows-x64"
+    #else
+    return archTag
+    #endif
+}
+
 func nameContains(_ haystack: String, _ needle: String) -> Bool {
     let h = Array(haystack.utf8), n = Array(needle.utf8)
     guard !n.isEmpty, h.count >= n.count else { return false }
@@ -282,7 +298,13 @@ func nameContains(_ haystack: String, _ needle: String) -> Bool {
     return false
 }
 
-func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size: Int)? {
+// Open a cart zip and return its payloads in priority order, best native AOT
+// for this machine first, the interpreted .wasm as the safe fallback next, and
+// any stray AOTs last. The zip is already wired as the asset source (assets and
+// manifest resolve straight out of it regardless of which payload wins). The
+// bytes are NOT read here — loadCart reads each entry in turn so a payload that
+// fails to load/instantiate/boot rolls to the next instead of bricking the cart.
+func loadWasmFromZip(_ zipPath: String) -> (archive: OpaquePointer, candidates: [String])? {
     print("DEBUG: opening zip: \(zipPath)")
     guard let archive = zip_open(zipPath) else {
         print("ERROR: failed to open zip: \(zipPath)")
@@ -290,12 +312,21 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
     }
     print("DEBUG: zip opened")
 
-    var wasmFile: String? = nil
+    // Classify every payload against this machine:
+    //  nativeAot — the .aot matching nativeAotTag: this arch's ELF AOT on unix
+    //              (arm64/x64/x86, shared by macOS/Linux/Android), or the
+    //              windows-x64 COFF AOT on Windows (serves Intel natively and
+    //              ARM via the loader's arch check → roll to .wasm). On unix the
+    //              tag is a bare arch, so the substring scan must NOT grab the
+    //              windows-x64.aot (whose "x64" would otherwise match) — hence
+    //              the !windows guard below.
+    //  wasmFile  — the interpreted .wasm; the universal fallback (any CPU/OS).
+    //  anyAot    — any other .aot, tried last; the loader rejects a wrong arch.
     var nativeAot: String? = nil
-    var archAot: String? = nil
-    var anyAot: String? = nil
+    var wasmFile: String? = nil
+    var anyAot: [String] = []
     let numFiles = zip_get_num_files(archive)
-    print("DEBUG: found \(numFiles) files in zip")
+    print("DEBUG: found \(numFiles) files in zip; nativeAotTag=\(nativeAotTag) archTag=\(archTag) platformTag=\(platformTag)")
     var nameBuf = [CChar](repeating: 0, count: 256)
 
     for i in 0..<numFiles {
@@ -304,52 +335,33 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
             let name = String(cString: nameBuf)
             print("DEBUG: file \(i): \(name) (\(size) bytes)")
             if name.hasSuffix(".aot") {
-                if anyAot == nil { anyAot = name }
-                if nativeAot == nil, nameContains(name, platformTag) { nativeAot = name }
-                if elfAotOk, archAot == nil, nameContains(name, archTag),
-                   !nameContains(name, "windows") { archAot = name }
+                if nativeAot == nil, nameContains(name, nativeAotTag),
+                   (nativeAotTag == "windows-x64" || !nameContains(name, "windows")) {
+                    nativeAot = name
+                } else {
+                    anyAot.append(name)
+                }
             } else if name.hasSuffix(".wasm"), wasmFile == nil {
                 wasmFile = name
             }
         }
     }
 
-    // native code for this machine beats the interpreter: the exact os-arch
-    // tag, then this arch's ELF .aot (shared by macOS/Linux/Android), then
-    // the .wasm; a lone untagged .aot is a last resort (a mismatched one is
-    // rejected by the loader)
-    guard let wasmFileName = nativeAot ?? archAot ?? wasmFile ?? anyAot else {
+    // Priority: this machine's native AOT → interpreted .wasm (safe on every
+    // CPU/OS) → stray AOTs last. The .wasm sits ahead of the stray-AOT list on
+    // purpose: a wrong-arch/OS AOT is rejected by the loader anyway, so we'd
+    // rather land on the interpreter than gamble on a doomed AOT. loadCart
+    // rolls to the next entry on any load/instantiate/boot failure, so a
+    // mismatched or corrupt native AOT (e.g. windows-x64.aot on Windows ARM)
+    // falls straight through to .wasm.
+    var candidates: [String] = []
+    if let n = nativeAot { candidates.append(n) }
+    if let w = wasmFile { candidates.append(w) }
+    candidates.append(contentsOf: anyAot)
+
+    guard !candidates.isEmpty else {
         zip_close(archive)
         print("ERROR: no .wasm or .aot cart found in zip")
-        return nil
-    }
-
-    print("DEBUG: opening \(wasmFileName)")
-    guard let file = zip_fopen(archive, wasmFileName) else {
-        zip_close(archive)
-        print("ERROR: failed to open \(wasmFileName) in zip")
-        return nil
-    }
-    print("DEBUG: file opened")
-
-    let size = zip_fget_size(file)
-    print("DEBUG: file size: \(size)")
-
-    guard let data = SDL_malloc(size) else {
-        zip_fclose(file)
-        zip_close(archive)
-        print("ERROR: malloc failed for \(size) bytes")
-        return nil
-    }
-
-    let read = zip_fread(data, size, file)
-    print("DEBUG: read \(read) bytes")
-    zip_fclose(file)
-
-    if read != size {
-        free(data)
-        zip_close(archive)
-        print("ERROR: read mismatch: expected \(size), got \(read)")
         return nil
     }
 
@@ -357,8 +369,49 @@ func loadWasmFromZip(_ zipPath: String) -> (data: UnsafeMutableRawPointer?, size
     setCurrentZipArchive(archive)
     Kit.shared.assetProvider = zipAssetBytes
     applyCartManifest()
+    print("DEBUG: payload candidates (best first): " + candidates.joined(separator: " → "))
     print("DEBUG: zip cartridge loaded successfully")
-    return (data, Int(size))
+    return (archive, candidates)
+}
+
+// Read a cart payload's bytes: straight out of the zip (no extraction) for a
+// zip entry, or off disk for a bare .aot/.wasm drop. SDL_malloc'd either way so
+// ejectCart can SDL_free it uniformly.
+func readPayload(_ name: String, fromZip: Bool, _ archive: OpaquePointer?) -> (UnsafeMutableRawPointer, Int)? {
+    if fromZip, let z = archive {
+        guard let file = name.withCString({ zip_fopen(z, $0) }) else { return nil }
+        let size = zip_fget_size(file)
+        guard let data = SDL_malloc(size) else { zip_fclose(file); return nil }
+        let read = zip_fread(data, size, file)
+        zip_fclose(file)
+        guard read == size else { SDL_free(data); return nil }
+        return (data, Int(size))
+    }
+    var rawSize = 0
+    guard let data = name.withCString({ SDL_LoadFile($0, &rawSize) }), rawSize > 0 else { return nil }
+    return (data, rawSize)
+}
+
+// The first .wasm entry in a zip — gives a bare .aot drop a .wasm fallback when
+// its sibling cart zip sits beside it.
+func zipWasmEntry(_ archive: OpaquePointer) -> String? {
+    var nameBuf = [CChar](repeating: 0, count: 256)
+    for j in 0..<zip_get_num_files(archive) {
+        var size: size_t = 0
+        guard zip_get_file_info(archive, UInt32(j), &nameBuf, nameBuf.count, &size) == 0 else { continue }
+        let name = String(cString: nameBuf)
+        if name.hasSuffix(".wasm") { return name }
+    }
+    return nil
+}
+
+// Title-bar label for a payload: basename + [AOT] / [interp], e.g.
+// "ufoemoji-embedded.arm64.aot [AOT]" or "ufoemoji-embedded.wasm [interp]".
+func payloadLabel(_ name: String) -> String {
+    var base = name
+    if let slash = base.utf8.lastIndex(of: 47) { base = String(base[base.index(after: slash)...]) }
+    let mode = base.lowercased().hasSuffix(".aot") ? "AOT" : "interp"
+    return "\(base) [\(mode)]"
 }
 
 // Preload every .wav entry straight from the zip into the Kit's sound
@@ -502,6 +555,7 @@ enum Main {
                 Kit.shared.logicalW = LOGICAL_W
                 Kit.shared.logicalH = LOGICAL_H
                 exec = nil; inst = nil; module = nil; cartData = nil; frameFn = nil
+                cartPayloadLabel = nil
                 SDL_SetAtomicInt(&cartLoaded, 0)
                 Kit.shared.stopAllVoices()
                 while Kit.shared.popEvent() != nil {}
@@ -527,79 +581,12 @@ enum Main {
             func loadCart(_ path: String) {
                 ejectCart()
 
-                var data: UnsafeMutableRawPointer
-                var size: Int
-
-                if path.hasSuffix(".zip") {
-                    guard let result = loadWasmFromZip(path) else {
-                        print("failed to load wasm from zip: " + path)
-                        return
-                    }
-                    data = result.data!
-                    size = result.size
-                } else {
-                    var rawSize = 0
-                    guard let rawData = path.withCString({ SDL_LoadFile($0, &rawSize) }) else {
-                        print("cart not found: " + path)
-                        return
-                    }
-                    data = rawData
-                    size = rawSize
-                }
-                // DEBUG: dump first 4 bytes (magic), size, and head/tail
-                // hex of the buffer about to be handed to wasm_runtime_load.
-                // \0asm = wasm, \0aot = WAMR AOT. Anything else means the
-                // loader is getting a wrong/truncated buffer. Head+tail hex
-                // lets you compare against `xxd` on the wasm file on disk.
-                do {
-                    let bytes = data.assumingMemoryBound(to: UInt8.self)
-                    func hex2(_ v: UInt8) -> String {
-                        let d = Array("0123456789abcdef")
-                        return String(d[Int(v >> 4)]) + String(d[Int(v & 0xF)])
-                    }
-                    func hexRange(_ start: Int, _ count: Int) -> String {
-                        var s = ""
-                        for i in 0..<count {
-                            let idx = start + i
-                            if idx < 0 || idx >= size { continue }
-                            if !s.isEmpty { s += " " }
-                            s += hex2(bytes[idx])
-                        }
-                        return s
-                    }
-                    let b0 = size > 0 ? bytes[0] : 0
-                    let b1 = size > 1 ? bytes[1] : 0
-                    let b2 = size > 2 ? bytes[2] : 0
-                    let b3 = size > 3 ? bytes[3] : 0
-                    var magicAscii = ""
-                    for b in [b0, b1, b2, b3] {
-                        magicAscii += (b >= 0x20 && b < 0x7f) ? String(UnicodeScalar(b)) : "."
-                    }
-                    print("DEBUG: wasm_runtime_load buf size=\(size) magic='\(magicAscii)' head16=[\(hexRange(0, 16))] tail16=[\(hexRange(max(0, size - 16), 16))]")
-                }
-                var errBuf = [CChar](repeating: 0, count: 128)
-                let m = errBuf.withUnsafeMutableBufferPointer { eb in
-                    wasm_runtime_load(data.assumingMemoryBound(to: UInt8.self),
-                                      UInt32(size), eb.baseAddress, UInt32(eb.count))
-                }
-                guard let m else {
-                    print("cart load failed: " + String(cString: errBuf))
-                    SDL_free(data)
-                    return
-                }
-                wasm_runtime_set_wasi_args(m, nil, 0, nil, 0, nil, 0, nil, nil)
-                let i = errBuf.withUnsafeMutableBufferPointer { eb in
-                    wasm_runtime_instantiate(m, 256 * 1024, 0, eb.baseAddress, UInt32(eb.count))
-                }
-                guard let i else {
-                    print("cart instantiate failed: " + String(cString: errBuf))
-                    wasm_runtime_unload(m)
-                    SDL_free(data)
-                    return
-                }
-                guard let e2 = wasm_runtime_create_exec_env(i, 256 * 1024) else {
-                    wasm_runtime_deinstantiate(i); wasm_runtime_unload(m); SDL_free(data); return
-                }
+                // Resolve the cart's payload candidates and wire the asset
+                // source ONCE, before trying any payload. A .zip cart lists its
+                // payloads best-first (native AOT → .wasm → stray AOTs); a bare
+                // .aot/.wasm drop runs itself off disk, with a sibling cart zip
+                // supplying assets (and, for a bare .aot, a .wasm fallback).
+                var candidates: [(name: String, fromZip: Bool, archive: OpaquePointer?)] = []
 
                 var dir = path
                 var base = path
@@ -611,8 +598,14 @@ enum Main {
                 }
 
                 if path.hasSuffix(".zip") {
+                    guard let zr = loadWasmFromZip(path) else {
+                        print("failed to load wasm from zip: " + path)
+                        return
+                    }
+                    candidates = zr.candidates.map { (name: $0, fromZip: true, archive: zr.archive) }
                     if let z = currentZipArchive { preloadZipSounds(z) }
                 } else {
+                    candidates.append((name: path, fromZip: false, archive: nil))
                     var stem = base
                     if let dot = stem.utf8.firstIndex(of: 46) { stem = String(stem[..<dot]) }
                     if let zipPath = siblingCartZip(dir: dir, stem: stem), let archive = zip_open(zipPath) {
@@ -621,6 +614,11 @@ enum Main {
                         Kit.shared.assetProvider = zipAssetBytes
                         applyCartManifest()
                         preloadZipSounds(archive)
+                        // A bare .aot can fail to load (wrong arch/OS); give it the
+                        // sibling zip's .wasm as an interpreter fallback.
+                        if path.hasSuffix(".aot"), let w = zipWasmEntry(archive) {
+                            candidates.append((name: w, fromZip: true, archive: archive))
+                        }
                     } else {
                         Kit.shared.assetDir = dir + "/assets/sfx"
                         cartDir = dir
@@ -629,6 +627,8 @@ enum Main {
                     }
                 }
 
+                // Store path is keyed to the cart (zip or file) name, so it is
+                // stable no matter which payload ends up winning.
                 if let pref = ("SuperBox64".withCString { org in "WasmCart".withCString { SDL_GetPrefPath(org, $0) } }) {
                     Kit.shared.storePath = String(cString: pref) + base + ".store.tsv"
                     SDL_free(UnsafeMutableRawPointer(mutating: pref))
@@ -637,39 +637,111 @@ enum Main {
                 Kit.shared.storeVals = []
                 Kit.shared.loadStore()
 
-                // Do NOT call _initialize here. WAMR's wasm_runtime_instantiate
-                // already runs a WASI reactor's _initialize (which runs
-                // __wasm_call_ctors) automatically, for BOTH the interpreter and
-                // AOT. Calling it a second time re-enters the reactor's run-once
-                // guard, which is compiled to `unreachable` — that was the
-                // long-standing "boot trapped: unreachable" on full-Swift-WASI
-                // carts (the old code called it explicitly). By the time we reach
-                // boot() the cart's globals/runtime are already initialized.
-                if let ex = wasm_runtime_get_exception(i) {
-                    print("post-instantiate trapped: " + String(cString: ex))
-                    wasm_runtime_dump_call_stack(e2)
-                    wasm_runtime_destroy_exec_env(e2); wasm_runtime_deinstantiate(i)
-                    wasm_runtime_unload(m); SDL_free(data)
+                // Try each candidate in priority order. On any load /
+                // instantiate / boot failure, tear that attempt down and roll
+                // to the next — so a mismatched or corrupt native AOT (e.g.
+                // windows-x64.aot on Windows ARM) falls through to the
+                // interpreted .wasm instead of bricking the cart.
+                for cand in candidates {
+                    guard let (data, size) = readPayload(cand.name, fromZip: cand.fromZip, cand.archive) else {
+                        print("payload read failed: \(cand.name) — trying next")
+                        continue
+                    }
+                    // DEBUG: dump first 4 bytes (magic), size, and head/tail hex
+                    // of the buffer about to be handed to wasm_runtime_load.
+                    // \0asm = wasm, \0aot = WAMR AOT. Anything else means the
+                    // loader is getting a wrong/truncated buffer. Head+tail hex
+                    // lets you compare against `xxd` on the wasm file on disk.
+                    do {
+                        let bytes = data.assumingMemoryBound(to: UInt8.self)
+                        func hex2(_ v: UInt8) -> String {
+                            let d = Array("0123456789abcdef")
+                            return String(d[Int(v >> 4)]) + String(d[Int(v & 0xF)])
+                        }
+                        func hexRange(_ start: Int, _ count: Int) -> String {
+                            var s = ""
+                            for i in 0..<count {
+                                let idx = start + i
+                                if idx < 0 || idx >= size { continue }
+                                if !s.isEmpty { s += " " }
+                                s += hex2(bytes[idx])
+                            }
+                            return s
+                        }
+                        let b0 = size > 0 ? bytes[0] : 0
+                        let b1 = size > 1 ? bytes[1] : 0
+                        let b2 = size > 2 ? bytes[2] : 0
+                        let b3 = size > 3 ? bytes[3] : 0
+                        var magicAscii = ""
+                        for b in [b0, b1, b2, b3] {
+                            magicAscii += (b >= 0x20 && b < 0x7f) ? String(UnicodeScalar(b)) : "."
+                        }
+                        print("DEBUG: try payload \(cand.name) — wasm_runtime_load buf size=\(size) magic='\(magicAscii)' head16=[\(hexRange(0, 16))] tail16=[\(hexRange(max(0, size - 16), 16))]")
+                    }
+                    var errBuf = [CChar](repeating: 0, count: 128)
+                    let m = errBuf.withUnsafeMutableBufferPointer { eb in
+                        wasm_runtime_load(data.assumingMemoryBound(to: UInt8.self),
+                                          UInt32(size), eb.baseAddress, UInt32(eb.count))
+                    }
+                    guard let m else {
+                        print("payload \(cand.name) load failed: " + String(cString: errBuf) + " — trying next")
+                        SDL_free(data)
+                        continue
+                    }
+                    wasm_runtime_set_wasi_args(m, nil, 0, nil, 0, nil, 0, nil, nil)
+                    let i = errBuf.withUnsafeMutableBufferPointer { eb in
+                        wasm_runtime_instantiate(m, 256 * 1024, 0, eb.baseAddress, UInt32(eb.count))
+                    }
+                    guard let i else {
+                        print("payload \(cand.name) instantiate failed: " + String(cString: errBuf) + " — trying next")
+                        wasm_runtime_unload(m)
+                        SDL_free(data)
+                        continue
+                    }
+                    guard let e2 = wasm_runtime_create_exec_env(i, 256 * 1024) else {
+                        print("payload \(cand.name) exec_env failed — trying next")
+                        wasm_runtime_deinstantiate(i); wasm_runtime_unload(m); SDL_free(data)
+                        continue
+                    }
+
+                    // Do NOT call _initialize here. WAMR's wasm_runtime_instantiate
+                    // already runs a WASI reactor's _initialize (which runs
+                    // __wasm_call_ctors) automatically, for BOTH the interpreter and
+                    // AOT. Calling it a second time re-enters the reactor's run-once
+                    // guard, which is compiled to `unreachable` — that was the
+                    // long-standing "boot trapped: unreachable" on full-Swift-WASI
+                    // carts (the old code called it explicitly). By the time we reach
+                    // boot() the cart's globals/runtime are already initialized.
+                    if let ex = wasm_runtime_get_exception(i) {
+                        print("payload \(cand.name) post-instantiate trapped: " + String(cString: ex) + " — trying next")
+                        wasm_runtime_dump_call_stack(e2)
+                        wasm_runtime_destroy_exec_env(e2); wasm_runtime_deinstantiate(i)
+                        wasm_runtime_unload(m); SDL_free(data)
+                        continue
+                    }
+                    guard let bootFn = "boot".withCString({ wasm_runtime_lookup_function(i, $0) }),
+                          let fFn = "frame".withCString({ wasm_runtime_lookup_function(i, $0) }) else {
+                        print("payload \(cand.name) not a cartridge: missing boot/frame — trying next")
+                        wasm_runtime_destroy_exec_env(e2); wasm_runtime_deinstantiate(i)
+                        wasm_runtime_unload(m); SDL_free(data)
+                        continue
+                    }
+                    _ = wasm_runtime_call_wasm(e2, bootFn, 0, nil)
+                    if let ex = wasm_runtime_get_exception(i) {
+                        print("payload \(cand.name) boot trapped: " + String(cString: ex) + " — trying next")
+                        wasm_runtime_dump_call_stack(e2)
+                        wasm_runtime_destroy_exec_env(e2); wasm_runtime_deinstantiate(i)
+                        wasm_runtime_unload(m); SDL_free(data)
+                        continue
+                    }
+                    cartData = data; module = m; inst = i; exec = e2; frameFn = fFn
+                    cartPayloadLabel = payloadLabel(cand.name)
+                    elapsedMs = 0; frames = 0; sentStart = false; sentThrust = false
+                    SDL_SetAtomicInt(&cartLoaded, 1)
+                    print("DEBUG: cart running as \(cartPayloadLabel!)")
                     return
                 }
-                guard let bootFn = "boot".withCString({ wasm_runtime_lookup_function(i, $0) }),
-                      let fFn = "frame".withCString({ wasm_runtime_lookup_function(i, $0) }) else {
-                    print("not a cartridge: missing boot/frame")
-                    wasm_runtime_destroy_exec_env(e2); wasm_runtime_deinstantiate(i)
-                    wasm_runtime_unload(m); SDL_free(data)
-                    return
-                }
-                _ = wasm_runtime_call_wasm(e2, bootFn, 0, nil)
-                if let ex = wasm_runtime_get_exception(i) {
-                    print("boot trapped: " + String(cString: ex))
-                    wasm_runtime_dump_call_stack(e2)
-                    wasm_runtime_destroy_exec_env(e2); wasm_runtime_deinstantiate(i)
-                    wasm_runtime_unload(m); SDL_free(data)
-                    return
-                }
-                cartData = data; module = m; inst = i; exec = e2; frameFn = fFn
-                elapsedMs = 0; frames = 0; sentStart = false; sentThrust = false
-                SDL_SetAtomicInt(&cartLoaded, 1)
+                print("ERROR: every payload candidate failed for " + path)
             }
 
             var vsyncOn: Int32 = 0
@@ -768,11 +840,15 @@ enum Main {
 
         // main thread: the OS event pump plus console controls
         var shownFPS: Int32 = -1
+        var shownLabel: String? = "<unset>"
         while SDL_GetAtomicInt(&runFlag) == 1 {
             let fps = SDL_GetAtomicInt(&currentFPS)
-            if fps != shownFPS {
+            let label = cartPayloadLabel
+            if fps != shownFPS || label != shownLabel {
                 shownFPS = fps
-                _ = "WasmCart - \(fps) FPS".withCString { SDL_SetWindowTitle(Kit.shared.window, $0) }
+                shownLabel = label
+                let title = label.map { "WasmCart - \($0) - \(fps) FPS" } ?? "WasmCart - \(fps) FPS"
+                _ = title.withCString { SDL_SetWindowTitle(Kit.shared.window, $0) }
             }
             if !kitHostPump() {
                 SDL_SetAtomicInt(&runFlag, 0)

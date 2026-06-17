@@ -37,12 +37,36 @@ final class ShellScene: SKScene {
         buildUI()
     }
 
-    private func vectorText(_ text: String, at pos: CGPoint, scale: CGFloat, alpha: CGFloat) {
-        let node = ShellFont.draw(text, lineWidth: 1 / scale)
+    // Vector text in one solid color (frog-green by default) at the given
+    // brightness — solid, bright and readable. The WASMCART hero label and its
+    // slot border are the exception: they get a Cylon rainbow sweep recolored
+    // per-frame in update(), not a static hue.
+    private func vectorText(_ text: String, at pos: CGPoint, scale: CGFloat, alpha: CGFloat,
+                            color: SKColor = .green) {
+        let node = ShellFont.draw(text, lineWidth: 1 / scale, color: color)
         node.position = pos
         node.setScale(scale)
         node.alpha = alpha
         lines.addChild(node)
+    }
+
+    // Full-saturation, full-brightness SKColor at the given hue (0..1 around the
+    // wheel) — the palette for the WASMCART Cylon rainbow sweep. The kit's
+    // SKColor is a plain RGBA value type with no HSV init, so fold hue → RGB.
+    private func rainbowColor(_ hue: CGFloat, alpha: CGFloat) -> SKColor {
+        let h = hue.truncatingRemainder(dividingBy: 1.0)
+        let sector = h * 6.0
+        var i = Int(sector)
+        if i < 0 { i = 0 } else if i > 5 { i = 5 }
+        let f = sector - CGFloat(i)
+        switch i {
+        case 0:  return SKColor(red: 1.0,      green: f,        blue: 0.0,      alpha: alpha)
+        case 1:  return SKColor(red: 1.0 - f,  green: 1.0,      blue: 0.0,      alpha: alpha)
+        case 2:  return SKColor(red: 0.0,      green: 1.0,      blue: f,        alpha: alpha)
+        case 3:  return SKColor(red: 0.0,      green: 1.0 - f,  blue: 1.0,      alpha: alpha)
+        case 4:  return SKColor(red: f,        green: 0.0,      blue: 1.0,      alpha: alpha)
+        default: return SKColor(red: 1.0,      green: 0.0,      blue: 1.0 - f,  alpha: alpha)
+        }
     }
 
     private func cartsDirectory() -> String? {
@@ -94,14 +118,16 @@ final class ShellScene: SKScene {
         lines.removeAllChildren()
         rowRects = []
 
-        // the slot, wearing the console's name as its cartridge label
+        // the slot, wearing the console's name as its cartridge label. Its border
+        // is recolored each frame by the Cylon rainbow sweep (update()).
         let slotY = size.height * 0.72
         let slot = SKShapeNode(rect: CGRect(x: size.width / 2 - 280, y: slotY, width: 560, height: 100))
-        slot.strokeColor = SKColor(white: 1, alpha: 0.6)
+        slot.strokeColor = SKColor.green
         slot.lineWidth = 1
         slot.name = "slot"
         lines.addChild(slot)
-        let slotLabel = ShellFont.draw("WASMCART", lineWidth: 1 / 3.4)
+        // the hero label: recolored each frame by the Cylon rainbow sweep (update()).
+        let slotLabel = ShellFont.draw("WASMCART", lineWidth: 1 / 3.4, color: .green)
         slotLabel.position = CGPoint(x: size.width / 2, y: slotY + 50)
         slotLabel.setScale(3.4)
         slotLabel.alpha = 0.625
@@ -111,20 +137,22 @@ final class ShellScene: SKScene {
         let rowH = size.height * 0.045
         var y = size.height * 0.58
         if carts.isEmpty {
-            vectorText("NO CARTS FOUND", at: CGPoint(x: size.width / 2, y: y), scale: 1.2, alpha: 0.6)
+            vectorText("NO CARTS FOUND", at: CGPoint(x: size.width / 2, y: y), scale: 1.2, alpha: 0.7)
             y -= rowH
         } else {
-            vectorText("CARTS", at: CGPoint(x: size.width / 2, y: y), scale: 1.2, alpha: 0.5)
+            vectorText("CARTS", at: CGPoint(x: size.width / 2, y: y), scale: 1.2, alpha: 0.6)
             y -= rowH
             for (i, name) in cartNames.enumerated() {
-                let alpha: CGFloat = i == selected ? 1.0 : 0.55
+                let alpha: CGFloat = i == selected ? 1.0 : 0.6
                 vectorText(name, at: CGPoint(x: size.width / 2, y: y), scale: 1.2, alpha: alpha)
                 let rect = CGRect(x: size.width / 2 - 480, y: y - rowH / 2, width: 960, height: rowH)
                 rowRects.append(rect)
                 if i == selected {
                     let box = SKShapeNode(rect: CGRect(x: size.width / 2 - 360, y: y - rowH / 2 + 4,
                                                        width: 720, height: rowH - 8))
-                    box.strokeColor = SKColor(white: 1, alpha: 0.8)
+                    // a brighter lime-green frame so the pick stands out from the
+                    // green text without leaving the green family.
+                    box.strokeColor = SKColor(red: 0.55, green: 1.0, blue: 0.3, alpha: 0.9)
                     box.lineWidth = 1
                     lines.addChild(box)
                 }
@@ -133,16 +161,18 @@ final class ShellScene: SKScene {
         }
 
         y -= rowH * 0.4
-        vectorText("OPEN FILE", at: CGPoint(x: size.width / 2, y: y), scale: 1.0, alpha: 0.65)
+        vectorText("OPEN FILE", at: CGPoint(x: size.width / 2, y: y), scale: 1.0, alpha: 0.7)
         dialogRect = CGRect(x: size.width / 2 - 240, y: y - rowH / 2, width: 480, height: rowH)
 
         y -= rowH
         let mode = emojiModeNames[Int(emojiMode) % emojiModeNames.count]
-        vectorText("EMOJI: " + mode, at: CGPoint(x: size.width / 2, y: y), scale: 1.0, alpha: 0.65)
+        vectorText("EMOJI: " + mode, at: CGPoint(x: size.width / 2, y: y), scale: 1.0, alpha: 0.7)
         emojiRect = CGRect(x: size.width / 2 - 240, y: y - rowH / 2, width: 480, height: rowH)
 
-        vectorText("ARROWS SELECT  ENTER OR DOUBLE CLICK LOADS  DROP A WASM ANYTIME", at: CGPoint(x: size.width / 2, y: size.height * 0.10), scale: 0.9, alpha: 0.5)
-        vectorText("CLICK EMOJI TO SWITCH MODE   CTRL ESC EJECTS", at: CGPoint(x: size.width / 2, y: size.height * 0.06), scale: 0.9, alpha: 0.5)
+        vectorText("ARROWS SELECT  ENTER OR DOUBLE CLICK LOADS  DROP A WASM ANYTIME",
+                   at: CGPoint(x: size.width / 2, y: size.height * 0.10), scale: 0.9, alpha: 0.55)
+        vectorText("CLICK EMOJI TO SWITCH MODE   CTRL ESC EJECTS",
+                   at: CGPoint(x: size.width / 2, y: size.height * 0.06), scale: 0.9, alpha: 0.55)
     }
 
     private func loadSelected() {
@@ -200,13 +230,30 @@ final class ShellScene: SKScene {
 
     override func update(_ currentTime: TimeInterval) {
         pulse += 0.03
-        let glow = 0.45 + 0.25 * abs(CGFloat(SDL_sinf(Float(pulse))))
+        // Cylon/KITT rainbow sweep across the WASMCART border and its letters.
+        // `sweep` is a triangle wave 0→1→0 (~2s per back-and-forth at 60fps), so the
+        // color scan reverses at each end like a Cylon scanner.
+        let saw = (pulse * 0.5).truncatingRemainder(dividingBy: 2.0)
+        let sweep = 1.0 - abs(saw - 1.0)
+        // the slot border rides the leading edge of the scan through the hue wheel,
+        // glowing a little as it goes.
+        let borderGlow = 0.7 + 0.25 * abs(CGFloat(SDL_sinf(Float(pulse))))
         for child in lines.children where child.name == "slot" {
-            (child as? SKShapeNode)?.strokeColor = SKColor(white: 1, alpha: glow)
+            (child as? SKShapeNode)?.strokeColor = rainbowColor(sweep, alpha: borderGlow)
         }
-        let throb = 0.625 + 0.225 * CGFloat(SDL_sinf(Float(pulse)))
+        // each letter holds its own hue, offset by its place in the word, so the
+        // whole rainbow travels across WASMCART and bounces back; the word keeps a
+        // gentle brightness shimmer so it stays readable.
+        let shimmer = 0.82 + 0.13 * abs(CGFloat(SDL_sinf(Float(pulse))))
         for child in lines.children where child.name == "slotlabel" {
-            child.alpha = throb
+            child.alpha = shimmer
+            let glyphs = child.children
+            let n = CGFloat(max(1, glyphs.count))
+            for (i, g) in glyphs.enumerated() {
+                let frac = CGFloat(i) / n
+                let hue = (frac + sweep).truncatingRemainder(dividingBy: 1.0)
+                (g as? SKShapeNode)?.strokeColor = rainbowColor(hue, alpha: 1.0)
+            }
         }
         rescanCountdown -= 1
         if rescanCountdown <= 0 {
@@ -284,7 +331,7 @@ enum ShellFont {
 
     // lineWidth is in the glyph's own (unscaled) space; callers that scale the
     // returned node pass 1/scale so every stroke renders a true 1px on screen.
-    static func draw(_ text: String, lineWidth: CGFloat = 1) -> SKNode {
+    static func draw(_ text: String, lineWidth: CGFloat = 1, color: SKColor = .white) -> SKNode {
         let node = SKNode()
         let advance: CGFloat = 14
         let width = CGFloat(text.count) * advance
@@ -297,7 +344,7 @@ enum ShellFont {
                     path.addLine(to: CGPoint(x: s[2], y: s[3]))
                 }
                 let glyph = SKShapeNode(path: path)
-                glyph.strokeColor = .white
+                glyph.strokeColor = color
                 glyph.lineWidth = lineWidth
                 glyph.position = CGPoint(x: x, y: -7)
                 node.addChild(glyph)

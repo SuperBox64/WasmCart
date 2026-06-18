@@ -146,7 +146,7 @@ mkdir -p "$OUTDIR"
 # same .wasm interprets cleanly. O0 code is still native and holds 60 fps.
 # --bounds-checks=1: the aot carries its own checks, so a bad access traps
 # with a clean exception on any runtime flavor instead of corrupting memory.
-EXTRA=(--opt-level=0 --bounds-checks=1)
+EXTRA=(--opt-level=${OPT_LEVEL:-0} --bounds-checks=1)
 [ "$SIMD" = 1 ] || EXTRA+=(--disable-simd)
 
 BUILT=()

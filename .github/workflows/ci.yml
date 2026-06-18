@@ -1,0 +1,109 @@
+name: WasmCart CI
+
+# Two things:
+#  1. macOS — build the real product end to end: vendored SDL3 + WAMR + ThorVG
+#     from source, then the embedded-Swift WasmCart host, then a headless smoke test.
+#  2. Linux — build wamrc (WAMR's LLVM AOT compiler) and compile the shipped cart's
+#     wasm at -O0/-O2/-O3 for arm64, uploaded as artifacts. This tests the open
+#     question: the macOS-host arm64 AOT miscompiles at -O>=1 (hangs in boot); does
+#     a LINUX-built arm64 AOT at -O2/-O3 boot cleanly? Download the artifact and run
+#     it on an Apple-Silicon Mac to find out.
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Linux: wamrc + optimized arm64 AOT (the miscompile experiment). Self-contained.
+  # ---------------------------------------------------------------------------
+  linux-aot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 18 + build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-18-dev libclang-18-dev clang-18 cmake build-essential zip unzip git
+
+      - name: Clone WAMR 2.4.4 source (matches the vendored runtime)
+        run: git clone --depth 1 --branch WAMR-2.4.4 https://github.com/bytecodealliance/wasm-micro-runtime vendor/wamr
+
+      - name: Extract the shipped cart's wasm
+        run: |
+          mkdir -p /tmp/cart
+          unzip -o carts/ufoemoji-embedded-cart.zip -d /tmp/cart
+          WASM="$(find /tmp/cart -name '*.wasm' | head -1)"
+          test -n "$WASM"
+          cp "$WASM" /tmp/cart.wasm
+          ls -la /tmp/cart.wasm
+
+      - name: Build wamrc + compile O0/O2/O3 arm64 AOT
+        run: |
+          export LLVM_DIR="$(llvm-config-18 --cmakedir)"
+          echo "LLVM_DIR=$LLVM_DIR"
+          mkdir -p out
+          for opt in 0 2 3; do
+            echo "=== --opt-level=$opt ==="
+            OPT_LEVEL=$opt ./wasm2aot.sh --targets=arm64 -o "/tmp/o$opt" /tmp/cart.wasm
+            cp "/tmp/o$opt"/*.arm64.aot "out/ufoemoji-embedded.O$opt.arm64.aot"
+          done
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-built-arm64-aot
+          path: out/*.aot
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # macOS: full WasmCart host (vendored SDL3 + WAMR + ThorVG + embedded-Swift host).
+  # ---------------------------------------------------------------------------
+  macos-host:
+    runs-on: macos-14
+    steps:
+      - name: Checkout WasmCart
+        uses: actions/checkout@v4
+        with:
+          path: WasmCart
+
+      - name: Checkout SuperBox64Kit (sibling, as build.sh expects ../SuperBox64Kit)
+        uses: actions/checkout@v4
+        with:
+          repository: SuperBox64/SuperBox64Kit
+          ref: embedded
+          path: SuperBox64Kit
+          # If SuperBox64Kit is private, add: token: ${{ secrets.SBK_PAT }}
+
+      - name: Build deps (cmake / meson / ninja / llvm@18)
+        run: brew install cmake meson ninja llvm@18
+
+      - name: Install Swift 6.3.2 RELEASE toolchain (embedded Swift)
+        run: |
+          curl -fL -o /tmp/swift.pkg \
+            https://download.swift.org/swift-6.3.2-release/xcode/swift-6.3.2-RELEASE/swift-6.3.2-RELEASE-osx.pkg
+          sudo installer -pkg /tmp/swift.pkg -target /
+          ls -d /Library/Developer/Toolchains/swift-6.3.2-RELEASE.xctoolchain
+
+      - name: Build WasmCart host (vendors SDL3 + WAMR + ThorVG, then the host)
+        working-directory: WasmCart
+        run: ./build.sh
+
+      - name: Headless smoke test
+        working-directory: WasmCart
+        run: |
+          SDL_VIDEODRIVER=offscreen WASMCART_DEBUG=1 \
+            CARTRIDGE_WASM=carts/ufoemoji-embedded-cart.zip CARTRIDGE_SELFTEST=3 \
+            ./WasmCart 2>&1 | tee run.log || true
+          grep -q "cart running as" run.log && echo "OK: cart loaded" || (echo "FAIL: cart did not load"; exit 1)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-wasmcart-host
+          path: WasmCart/WasmCart
+          if-no-files-found: error

@@ -6,7 +6,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 SDLVER="${SDL_VER:-release-3.4.10}"
-WAMRVER="${WAMR_VER:-WAMR-2.4.2}"
+WAMRVER="${WAMR_VER:-WAMR-2.4.4}"
+THORVGVER="${THORVG_VER:-9bb0e24}"
 PLATFORM="$(uname | tr '[:upper:]' '[:lower:]')"
 
 if [ ! -f vendor/libSDL3.a ]; then
@@ -36,3 +37,24 @@ if [ ! -f vendor/libiwasm.a ]; then
   cp vendor/wamr-build/libiwasm.a vendor/
 fi
 echo "✓ vendor/libiwasm.a ($(stat -f%z vendor/libiwasm.a 2>/dev/null || stat -c%s vendor/libiwasm.a) bytes)"
+
+# ThorVG: SVG rasterizer (replaces the prebuilt libresvg.a drop -- buildable from
+# source + reproducible + smaller). CPU SW engine only: it bakes SVG into a
+# caller-provided pixel buffer for SDL_UpdateTexture; the gl/wg engines render into
+# GPU textures and don't fit the bake-to-texture step. SIMD + multi-threaded.
+# Pinned to the commit verified to render the cart SVGs (clip + mask + embedded
+# base64 PNG) correctly. The C API header lives in the cloned source tree.
+if [ ! -f vendor/libthorvg-1.a ]; then
+  if [ ! -d vendor/thorvg ]; then
+    git clone https://github.com/thorvg/thorvg vendor/thorvg
+  fi
+  ( cd vendor/thorvg && { git fetch --depth 1 origin "$THORVGVER" 2>/dev/null || true; } && git checkout -q "$THORVGVER" )
+  rm -rf vendor/thorvg-build
+  meson setup vendor/thorvg vendor/thorvg-build \
+    --default-library=static --buildtype=release \
+    -Dengines=cpu -Dloaders=svg,png -Dthreads=true -Dsimd=true \
+    -Dbindings=capi -Dstatic=true -Dextra= -Dsavers= -Dtools= -Dtests=false -Dlog=false >/dev/null
+  meson compile -C vendor/thorvg-build >/dev/null
+  cp vendor/thorvg-build/src/libthorvg-1.a vendor/
+fi
+echo "✓ vendor/libthorvg-1.a ($(stat -f%z vendor/libthorvg-1.a 2>/dev/null || stat -c%s vendor/libthorvg-1.a) bytes)"

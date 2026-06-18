@@ -14,6 +14,12 @@ import CZip
 @_silgen_name("kit_register_natives")
 func kitRegisterNatives() -> Bool
 
+// Verbose host diagnostics are OFF unless WASMCART_DEBUG is set in the
+// environment. Keeps normal (and benchmark) runs quiet — no per-glyph emoji
+// spam, no cart-load DEBUG dump. ERROR/trap/selftest/PROF lines stay ungated.
+nonisolated(unsafe) let kDebugLog: Bool = ("WASMCART_DEBUG".withCString { SDL_getenv($0) }) != nil
+@inline(__always) func dbg(_ s: @autoclosure () -> String) { if kDebugLog { print(s()) } }
+
 nonisolated(unsafe) var currentZipArchive: OpaquePointer? = nil
 
 @_silgen_name("set_current_zip_archive")
@@ -42,20 +48,20 @@ func takePendingCart() -> String? {
 }
 
 func openCartDialog() {
-    print("DEBUG: openCartDialog called")
-    print("DEBUG: calling SDL_ShowOpenFileDialog with no filters")
+    dbg("DEBUG:openCartDialog called")
+    dbg("DEBUG:calling SDL_ShowOpenFileDialog with no filters")
     SDL_ShowOpenFileDialog({ _, files, _ in
-        print("DEBUG: dialog callback called, files=\(files != nil ? "yes" : "nil")")
+        dbg("DEBUG:dialog callback called, files=\(files != nil ? "yes" : "nil")")
         if let files {
             var filePtr = files
             while let file = filePtr.pointee {
-                print("DEBUG: selected file: \(String(cString: file))")
+                dbg("DEBUG:selected file: \(String(cString: file))")
                 insertCart(String(cString: file))
                 filePtr += 1
             }
         }
     }, nil, Kit.shared.window, nil, 0, nil, false)
-    print("DEBUG: SDL_ShowOpenFileDialog returned")
+    dbg("DEBUG:SDL_ShowOpenFileDialog returned")
 }
 
 nonisolated(unsafe) var wantDialog = SDL_AtomicInt(value: 0)
@@ -152,7 +158,6 @@ func emojiZipPng(_ cp: Int32) -> [UInt8]? {
             let read = out.withUnsafeMutableBytes { zip_fread($0.baseAddress, size, file) }
             zip_fclose(file)
             if read == size {
-                print("emoji png: apple-color-emoji.zip!\(name) (\(size) bytes, cp U+\(hex))")
                 return out
             }
         }
@@ -240,7 +245,7 @@ func applyCartManifest() {
     if let w = manifestInt(manifest, "logicalWidth"), let h = manifestInt(manifest, "logicalHeight"), w > 0, h > 0 {
         Kit.shared.logicalW = Float(w)
         Kit.shared.logicalH = Float(h)
-        print("DEBUG: cart logical size \(w)x\(h)")
+        dbg("DEBUG:cart logical size \(w)x\(h)")
     }
 }
 
@@ -305,12 +310,12 @@ func nameContains(_ haystack: String, _ needle: String) -> Bool {
 // bytes are NOT read here — loadCart reads each entry in turn so a payload that
 // fails to load/instantiate/boot rolls to the next instead of bricking the cart.
 func loadWasmFromZip(_ zipPath: String) -> (archive: OpaquePointer, candidates: [String])? {
-    print("DEBUG: opening zip: \(zipPath)")
+    dbg("DEBUG:opening zip: \(zipPath)")
     guard let archive = zip_open(zipPath) else {
         print("ERROR: failed to open zip: \(zipPath)")
         return nil
     }
-    print("DEBUG: zip opened")
+    dbg("DEBUG:zip opened")
 
     // Classify every payload against this machine:
     //  nativeAot — the .aot matching nativeAotTag: this arch's ELF AOT on unix
@@ -326,14 +331,14 @@ func loadWasmFromZip(_ zipPath: String) -> (archive: OpaquePointer, candidates: 
     var wasmFile: String? = nil
     var anyAot: [String] = []
     let numFiles = zip_get_num_files(archive)
-    print("DEBUG: found \(numFiles) files in zip; nativeAotTag=\(nativeAotTag) archTag=\(archTag) platformTag=\(platformTag)")
+    dbg("DEBUG:found \(numFiles) files in zip; nativeAotTag=\(nativeAotTag) archTag=\(archTag) platformTag=\(platformTag)")
     var nameBuf = [CChar](repeating: 0, count: 256)
 
     for i in 0..<numFiles {
         var size: size_t = 0
         if zip_get_file_info(archive, UInt32(i), &nameBuf, nameBuf.count, &size) == 0 {
             let name = String(cString: nameBuf)
-            print("DEBUG: file \(i): \(name) (\(size) bytes)")
+            dbg("DEBUG:file \(i): \(name) (\(size) bytes)")
             if name.hasSuffix(".aot") {
                 if nativeAot == nil, nameContains(name, nativeAotTag),
                    (nativeAotTag == "windows-x64" || !nameContains(name, "windows")) {
@@ -369,8 +374,8 @@ func loadWasmFromZip(_ zipPath: String) -> (archive: OpaquePointer, candidates: 
     setCurrentZipArchive(archive)
     Kit.shared.assetProvider = zipAssetBytes
     applyCartManifest()
-    print("DEBUG: payload candidates (best first): " + candidates.joined(separator: " → "))
-    print("DEBUG: zip cartridge loaded successfully")
+    dbg("DEBUG:payload candidates (best first): " + candidates.joined(separator: " → "))
+    dbg("DEBUG:zip cartridge loaded successfully")
     return (archive, candidates)
 }
 
@@ -676,7 +681,7 @@ enum Main {
                         for b in [b0, b1, b2, b3] {
                             magicAscii += (b >= 0x20 && b < 0x7f) ? String(UnicodeScalar(b)) : "."
                         }
-                        print("DEBUG: try payload \(cand.name) — wasm_runtime_load buf size=\(size) magic='\(magicAscii)' head16=[\(hexRange(0, 16))] tail16=[\(hexRange(max(0, size - 16), 16))]")
+                        dbg("DEBUG:try payload \(cand.name) — wasm_runtime_load buf size=\(size) magic='\(magicAscii)' head16=[\(hexRange(0, 16))] tail16=[\(hexRange(max(0, size - 16), 16))]")
                     }
                     var errBuf = [CChar](repeating: 0, count: 128)
                     let m = errBuf.withUnsafeMutableBufferPointer { eb in
@@ -738,7 +743,7 @@ enum Main {
                     cartPayloadLabel = payloadLabel(cand.name)
                     elapsedMs = 0; frames = 0; sentStart = false; sentThrust = false
                     SDL_SetAtomicInt(&cartLoaded, 1)
-                    print("DEBUG: cart running as \(cartPayloadLabel!)")
+                    dbg("DEBUG:cart running as \(cartPayloadLabel!)")
                     return
                 }
                 print("ERROR: every payload candidate failed for " + path)
@@ -814,7 +819,7 @@ enum Main {
                     let pn = UInt64(max(1, fpsFrames))
                     let logicNs = pk.profCartNs >= (pk.profImgNs + pk.profTxtNs) ? pk.profCartNs - pk.profImgNs - pk.profTxtNs : pk.profCartNs
                     let workNs = logicNs + pk.profImgNs + pk.profTxtNs + pk.profBlitNs   // real per-frame work (no vsync)
-                    print("PROF fps=\(fps)  WORK=\(workNs/pn/1000)us | logic=\(logicNs/pn/1000)us img=\(pk.profImgNs/pn/1000)us txt=\(pk.profTxtNs/pn/1000)us blit=\(pk.profBlitNs/pn/1000)us  ||  vsync-idle=\(pk.profVsyncNs/pn/1000)us  (/1000=ms)")
+                    dbg("PROF fps=\(fps)  WORK=\(workNs/pn/1000)us | logic=\(logicNs/pn/1000)us img=\(pk.profImgNs/pn/1000)us txt=\(pk.profTxtNs/pn/1000)us blit=\(pk.profBlitNs/pn/1000)us  ||  vsync-idle=\(pk.profVsyncNs/pn/1000)us  (/1000=ms)")
                     pk.hudLine1 = "FPS \(fps)  frame \(msTenths(workNs, pn))  avg \(msTenths(workNs, pn))  max \(msTenths(maxFrameWorkNs, 1))ms"
                     pk.hudLine2 = "img \(pk.profImgCount/pn)/\(msTenths(pk.profImgNs, pn))ms  txt \(pk.profTxtCount/pn)/\(msTenths(pk.profTxtNs, pn))ms  rest \(msTenths(logicNs, pn))ms"
                     pk.hudLine3 = "glyph \(pk.glyphCacheCount)  img# \(pk.imageLiveCount)"
@@ -861,7 +866,7 @@ enum Main {
                 }
             }
             if SDL_GetAtomicInt(&wantDialog) == 1 {
-                print("DEBUG: processing wantDialog")
+                dbg("DEBUG:processing wantDialog")
                 SDL_SetAtomicInt(&wantDialog, 0)
                 openCartDialog()
             }

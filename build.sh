@@ -27,7 +27,7 @@ GAME_MAIN="$PWD/host-main.swift" \
 OUT="$PWD/$OUT_NAME" \
 SDL_STATIC_A="$PWD/vendor/libSDL3.a" \
 EXTRA_OBJS="$PWD/vendor/natives.o $PWD/vendor/zip.o" \
-EXTRA_LIBS="$PWD/vendor/libiwasm.a $PWD/vendor/libresvg.a -liconv -lz" \
-KIT_STB_CFLAGS="-DKIT_USE_RESVG -I$PWD/vendor" \
+EXTRA_LIBS="$PWD/vendor/libiwasm.a $PWD/vendor/libthorvg-1.a -lc++ -lpthread -liconv -lz" \
+KIT_STB_CFLAGS="-DKIT_USE_THORVG -I$PWD/vendor/thorvg/src/bindings/capi" \
 EXTRA_XCC="-Xcc -I$PWD/vendor/wamr/core/iwasm/include -Xcc -fmodule-map-file=$KIT/Sources/CWamr/include/module.modulemap -I $KIT/Sources/CWamr/include -Xcc -fmodule-map-file=$KIT/Sources/CZip/include/module.modulemap -I $KIT/Sources/CZip/include" \
   "$KIT/native/build-native-game.sh"

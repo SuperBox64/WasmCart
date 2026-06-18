@@ -48,10 +48,16 @@ jobs:
           export LLVM_DIR="$(llvm-config-18 --cmakedir)"
           echo "LLVM_DIR=$LLVM_DIR"
           mkdir -p out
+          # Production cart wasm (boots to the menu) AND the level-1 benchmark wasm
+          # (ci/bench-level1.wasm — BENCHMARK_LEVEL1 build that boots straight into
+          # gameplay), so we can measure the REAL level-1 logic time, not the idle menu.
           for opt in 0 2 3; do
-            echo "=== --opt-level=$opt ==="
-            OPT_LEVEL=$opt ./wasm2aot.sh --targets=arm64 -o "/tmp/o$opt" /tmp/cart.wasm
-            cp "/tmp/o$opt"/*.arm64.aot "out/ufoemoji-embedded.O$opt.arm64.aot"
+            echo "=== prod --opt-level=$opt ==="
+            OPT_LEVEL=$opt ./wasm2aot.sh --targets=arm64 -o "/tmp/op$opt" /tmp/cart.wasm
+            cp "/tmp/op$opt"/*.arm64.aot "out/ufoemoji-embedded.prod.O$opt.arm64.aot"
+            echo "=== level1 --opt-level=$opt ==="
+            OPT_LEVEL=$opt ./wasm2aot.sh --targets=arm64 -o "/tmp/ol$opt" ci/bench-level1.wasm
+            cp "/tmp/ol$opt"/*.arm64.aot "out/bench-level1.O$opt.arm64.aot"
           done
           ls -la out
 
@@ -80,8 +86,10 @@ jobs:
           path: SuperBox64Kit
           # If SuperBox64Kit is private, add: token: ${{ secrets.SBK_PAT }}
 
-      - name: Build deps (cmake / meson / ninja / llvm@18)
-        run: brew install cmake meson ninja llvm@18
+      - name: Build deps (cmake / meson / ninja / llvm@18 / sdl3 headers)
+        # sdl3 provides the SDL3/SDL.h headers the CSDL3 module needs (the build links
+        # the vendored static libSDL3.a, but headers come from /opt/homebrew/include).
+        run: brew install cmake meson ninja llvm@18 sdl3
 
       - name: Install Swift 6.3.2 RELEASE toolchain (embedded Swift)
         run: |

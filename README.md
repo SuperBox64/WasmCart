@@ -388,4 +388,4 @@ This repo ships no top‑level license file; the bundled `NotoColorEmoji-LICENSE
 covers the Noto font, and `vendor/resvg.h` carries resvg's Apache‑2.0/MIT notice.
 WasmCart's own console code (`host-main.swift`, `Sources/ShellScene.swift`,
 `vendor/natives.c`, the build/vendor/AOT scripts) is part of the SuperBox64Kit
-project by Todd Bruss.
+project by Heisenburg.

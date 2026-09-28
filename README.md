@@ -389,3 +389,9 @@ covers the Noto font, and `vendor/resvg.h` carries resvg's Apache‑2.0/MIT noti
 WasmCart's own console code (`host-main.swift`, `Sources/ShellScene.swift`,
 `vendor/natives.c`, the build/vendor/AOT scripts) is part of the SuperBox64Kit
 project by AgentiLoop.
+
+---
+
+**AgentiLoop:** [agentiloop.ai](https://agentiloop.ai/)
+
+Copyright © 2026 AgentiLoop.ai, a Logos InkPen LLC company. All rights reserved.
